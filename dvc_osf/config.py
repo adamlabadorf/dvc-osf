@@ -27,3 +27,11 @@ class Config:
 
     # Minimum project ID length
     MIN_PROJECT_ID_LENGTH = 5
+
+    # Upload configuration
+    OSF_UPLOAD_CHUNK_SIZE = int(
+        os.getenv("OSF_UPLOAD_CHUNK_SIZE", str(5 * 1024 * 1024))
+    )  # 5MB default
+    OSF_UPLOAD_TIMEOUT = int(os.getenv("OSF_UPLOAD_TIMEOUT", "300"))  # 300 seconds
+    UPLOAD_CHUNK_MIN_SIZE = 1 * 1024 * 1024  # 1MB minimum
+    UPLOAD_CHUNK_MAX_SIZE = 100 * 1024 * 1024  # 100MB maximum

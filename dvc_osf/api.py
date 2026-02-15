@@ -1,7 +1,8 @@
 """OSF API client for interacting with the Open Science Framework."""
 
+import logging
 import time
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, BinaryIO, Callable, Dict, Iterator, Optional
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -12,10 +13,15 @@ from .exceptions import (
     OSFAPIError,
     OSFAuthenticationError,
     OSFConnectionError,
+    OSFFileLockedError,
     OSFNotFoundError,
     OSFPermissionError,
+    OSFQuotaExceededError,
     OSFRateLimitError,
+    OSFVersionConflictError,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class OSFAPIClient:
@@ -33,6 +39,7 @@ class OSFAPIClient:
         base_url: Optional[str] = None,
         timeout: Optional[int] = None,
         max_retries: Optional[int] = None,
+        upload_timeout: Optional[int] = None,
     ) -> None:
         """
         Initialize OSF API client.
@@ -42,11 +49,13 @@ class OSFAPIClient:
             base_url: API base URL (defaults to Config.API_BASE_URL)
             timeout: Request timeout in seconds (defaults to Config.DEFAULT_TIMEOUT)
             max_retries: Maximum retry attempts (defaults to Config.MAX_RETRIES)
+            upload_timeout: Upload timeout in seconds (defaults to Config.OSF_UPLOAD_TIMEOUT)
         """
         self.token = token
         self.base_url = (base_url or Config.API_BASE_URL).rstrip("/")
         self.timeout = timeout or Config.DEFAULT_TIMEOUT
         self.max_retries = max_retries or Config.MAX_RETRIES
+        self.upload_timeout = upload_timeout or Config.OSF_UPLOAD_TIMEOUT
 
         # Create session with connection pooling
         self.session = requests.Session()
@@ -154,6 +163,10 @@ class OSFAPIClient:
                 delay = Config.RETRY_BACKOFF**attempt
                 time.sleep(delay)
 
+            except OSFVersionConflictError:
+                # Version conflicts should NOT be retried
+                raise
+
             except OSFAPIError as e:
                 # Check if this API error is retryable (5xx errors)
                 if e.retryable:
@@ -187,6 +200,9 @@ class OSFAPIClient:
             OSFAuthenticationError: 401 status code
             OSFPermissionError: 403 status code
             OSFNotFoundError: 404 status code
+            OSFVersionConflictError: 409 status code
+            OSFQuotaExceededError: 413 status code
+            OSFFileLockedError: 423 status code
             OSFRateLimitError: 429 status code
             OSFAPIError: Other 4xx/5xx status codes
         """
@@ -213,13 +229,58 @@ class OSFAPIClient:
             )
         elif status_code == 403:
             raise OSFPermissionError(
-                error_message or "Permission denied for OSF operation.",
+                error_message
+                or (
+                    "Permission denied for OSF operation. "
+                    "Please check that your OSF token has the required "
+                    "permissions (osf.full_write for uploads)."
+                ),
                 status_code=status_code,
                 response=response,
             )
         elif status_code == 404:
             raise OSFNotFoundError(
                 error_message or "Resource not found on OSF.",
+                status_code=status_code,
+                response=response,
+            )
+        elif status_code == 409:
+            logger.warning(
+                f"Version conflict detected (409): {error_message or 'File version conflict'}"
+            )
+            raise OSFVersionConflictError(
+                error_message
+                or (
+                    "File version conflict detected. "
+                    "Another process may have modified the file. "
+                    "Please retry the operation."
+                ),
+                status_code=status_code,
+                response=response,
+            )
+        elif status_code == 413:
+            logger.error(
+                f"Storage quota exceeded (413): {error_message or 'OSF storage quota exceeded'}"
+            )
+            raise OSFQuotaExceededError(
+                error_message
+                or (
+                    "OSF storage quota exceeded. "
+                    "Please free up space in your OSF project or upgrade your storage plan. "
+                    "Visit https://osf.io/settings/ to manage your storage."
+                ),
+                status_code=status_code,
+                response=response,
+            )
+        elif status_code == 423:
+            logger.warning(f"File locked (423): {error_message or 'File is locked'}")
+            raise OSFFileLockedError(
+                error_message
+                or (
+                    "File is locked and cannot be modified. "
+                    "Another process may be accessing the file. "
+                    "Please wait and try again."
+                ),
                 status_code=status_code,
                 response=response,
             )
@@ -420,6 +481,116 @@ class OSFAPIClient:
 
             if not current_url:
                 break
+
+    def upload_file(
+        self,
+        url: str,
+        file_obj: BinaryIO,
+        callback: Optional[Callable[[int, int], None]] = None,
+        total_size: Optional[int] = None,
+    ) -> requests.Response:
+        """
+        Upload a file with streaming support and progress tracking.
+
+        Args:
+            url: Upload URL (typically from OSF API links.upload)
+            file_obj: File-like object to upload
+            callback: Optional progress callback function (bytes_uploaded, total_bytes)
+            total_size: Total file size in bytes (for progress tracking)
+
+        Returns:
+            Response object
+
+        Raises:
+            OSFQuotaExceededError: Storage quota exceeded
+            OSFFileLockedError: File is locked
+            OSFVersionConflictError: Version conflict
+            Other OSF exceptions
+        """
+        # Wrap file object with progress tracking if callback provided
+        if callback and total_size:
+            file_data = self._stream_upload(file_obj, callback, total_size)
+        else:
+            file_data = file_obj
+
+        # Use upload_timeout for file uploads
+        headers = {"Content-Type": "application/octet-stream"}
+
+        return self._request(
+            "PUT",
+            url,
+            data=file_data,
+            headers=headers,
+        )
+
+    def upload_chunk(
+        self,
+        url: str,
+        chunk_data: bytes,
+        start_byte: int,
+        end_byte: int,
+        total_size: int,
+    ) -> requests.Response:
+        """
+        Upload a file chunk with Content-Range header.
+
+        Args:
+            url: Upload URL
+            chunk_data: Chunk data bytes
+            start_byte: Starting byte position (0-indexed)
+            end_byte: Ending byte position (inclusive)
+            total_size: Total file size in bytes
+
+        Returns:
+            Response object
+        """
+        headers = {
+            "Content-Type": "application/octet-stream",
+            "Content-Range": f"bytes {start_byte}-{end_byte}/{total_size}",
+        }
+
+        return self._request(
+            "PUT",
+            url,
+            data=chunk_data,
+            headers=headers,
+        )
+
+    def _stream_upload(
+        self,
+        file_obj: BinaryIO,
+        callback: Callable[[int, int], None],
+        total_size: int,
+    ) -> Iterator[bytes]:
+        """
+        Stream file data with progress callbacks.
+
+        Args:
+            file_obj: File-like object to read from
+            callback: Progress callback function
+            total_size: Total file size
+
+        Yields:
+            Chunks of file data
+        """
+        bytes_sent = 0
+        chunk_size = Config.CHUNK_SIZE
+
+        while True:
+            chunk = file_obj.read(chunk_size)
+            if not chunk:
+                break
+
+            bytes_sent += len(chunk)
+
+            # Invoke callback with progress
+            try:
+                callback(bytes_sent, total_size)
+            except Exception:
+                # Don't let callback errors fail the upload
+                pass
+
+            yield chunk
 
     def close(self) -> None:
         """Close the session and release resources."""

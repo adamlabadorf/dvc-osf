@@ -2,8 +2,9 @@
 
 import hashlib
 import io
+import logging
 import os
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, BinaryIO, Callable, Dict, List, Optional, Union
 
 import requests
 from dvc_objects.fs.base import ObjectFileSystem
@@ -13,13 +14,18 @@ from .auth import get_token
 from .config import Config
 from .exceptions import OSFIntegrityError, OSFNotFoundError
 from .utils import (
+    compute_upload_checksum,
+    determine_upload_strategy,
     get_directory,
+    get_file_size,
     get_filename,
     normalize_path,
     parse_osf_url,
     path_to_api_url,
     serialize_path,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class OSFFile(io.IOBase):
@@ -245,6 +251,114 @@ class OSFFile(io.IOBase):
         return self._closed
 
 
+class OSFWriteFile(io.IOBase):
+    """
+    File-like object for writing to OSF files.
+
+    Buffers data and uploads on close or explicit flush.
+    Supports both binary and text write modes.
+    """
+
+    def __init__(
+        self,
+        api_client: OSFAPIClient,
+        upload_url: str,
+        mode: str = "wb",
+        chunk_size: Optional[int] = None,
+    ) -> None:
+        """
+        Initialize OSF write file wrapper.
+
+        Args:
+            api_client: OSF API client instance
+            upload_url: URL for uploading the file
+            mode: File mode ('wb' for binary, 'w' for text)
+            chunk_size: Chunk size for uploads (defaults to Config.OSF_UPLOAD_CHUNK_SIZE)
+        """
+        self.api_client = api_client
+        self.upload_url = upload_url
+        self.mode = mode
+        self.chunk_size = chunk_size or Config.OSF_UPLOAD_CHUNK_SIZE
+        self._buffer = io.BytesIO()
+        self._closed = False
+        self._bytes_written = 0
+
+    def write(self, data: Union[bytes, str]) -> int:
+        """
+        Write data to the file buffer.
+
+        Args:
+            data: Data to write (bytes if binary mode, str if text mode)
+
+        Returns:
+            Number of bytes/characters written
+
+        Raises:
+            ValueError: If file is closed or mode mismatch
+        """
+        if self._closed:
+            raise ValueError("I/O operation on closed file")
+
+        # Convert text to bytes if needed
+        if isinstance(data, str):
+            if "b" in self.mode:
+                raise TypeError("a bytes-like object is required, not 'str'")
+            data_bytes = data.encode("utf-8")
+        else:
+            if "b" not in self.mode:
+                raise TypeError("write() argument must be str, not 'bytes'")
+            data_bytes = data
+
+        # Write to buffer
+        bytes_written = self._buffer.write(data_bytes)
+        self._bytes_written += bytes_written
+
+        return len(data) if isinstance(data, str) else bytes_written
+
+    def flush(self) -> None:
+        """Flush buffer (no-op, upload happens on close)."""
+        pass
+
+    def close(self) -> None:
+        """Close file and upload buffered data."""
+        if self._closed:
+            return
+
+        try:
+            # Get buffered data
+            self._buffer.seek(0)
+            file_data = self._buffer.read()
+
+            if file_data:
+                # Upload the data
+                self.api_client.upload_file(
+                    self.upload_url,
+                    io.BytesIO(file_data),
+                    callback=None,
+                    total_size=len(file_data),
+                )
+        finally:
+            self._closed = True
+            self._buffer.close()
+
+    def writable(self) -> bool:
+        """Check if file is writable."""
+        return not self._closed
+
+    def __enter__(self) -> "OSFWriteFile":
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Context manager exit."""
+        self.close()
+
+    @property
+    def closed(self) -> bool:
+        """Check if file is closed."""
+        return self._closed
+
+
 class OSFFileSystem(ObjectFileSystem):
     """
     Filesystem interface for Open Science Framework (OSF) storage.
@@ -455,6 +569,10 @@ class OSFFileSystem(ObjectFileSystem):
         hashes = extra.get("hashes", {})
         checksum = hashes.get("md5")
 
+        # Get version information if available
+        version = attributes.get("version")
+        version_id = attributes.get("version_identifier")
+
         # Build full path
         if parent_path:
             full_path = f"{parent_path}/{name}"
@@ -463,13 +581,21 @@ class OSFFileSystem(ObjectFileSystem):
 
         path_str = serialize_path(project_id, provider, full_path)
 
-        return {
+        metadata = {
             "name": path_str,
             "type": "directory" if kind == "folder" else "file",
             "size": size or 0,
             "modified": modified,
             "checksum": checksum,
         }
+
+        # Include version metadata if available
+        if version is not None:
+            metadata["version"] = version
+        if version_id is not None:
+            metadata["version_id"] = version_id
+
+        return metadata
 
     def info(self, path: str, **kwargs: Any) -> Dict[str, Any]:
         """
@@ -516,27 +642,45 @@ class OSFFileSystem(ObjectFileSystem):
         # File not found
         raise OSFNotFoundError(f"File not found: {path}")
 
-    def open(self, path: str, mode: str = "rb", **kwargs: Any) -> OSFFile:
+    def open(
+        self, path: str, mode: str = "rb", **kwargs: Any
+    ) -> Union[OSFFile, OSFWriteFile]:
         """
         Open a file on OSF.
 
         Args:
             path: Path to the file
-            mode: File mode ('rb' for binary read, 'r' for text read)
+            mode: File mode ('rb', 'r' for read, 'wb', 'w' for write)
             **kwargs: Additional arguments
 
         Returns:
             File-like object
 
         Raises:
-            NotImplementedError: For write modes
+            NotImplementedError: For append or read-write modes
         """
-        if "w" in mode or "a" in mode:
+        # Check for unsupported modes
+        if "a" in mode:
             raise NotImplementedError(
-                "Write operations not yet supported. "
-                "Only read operations (mode='rb' or 'r') are implemented."
+                "Append mode not supported. "
+                "OSF does not support appending to existing files."
+            )
+        if "+" in mode or ("r" in mode and "w" in mode):
+            raise NotImplementedError(
+                "Read-write mode not supported. "
+                "Use separate open() calls for reading and writing."
             )
 
+        # Handle write modes
+        if "w" in mode:
+            project_id, provider, file_path = self._resolve_path(path)
+
+            # Get upload URL using the same logic as put_file
+            upload_url = self._get_upload_url(project_id, provider, file_path)
+
+            return OSFWriteFile(self.client, upload_url, mode=mode)
+
+        # Handle read modes (existing logic)
         # Get file info (which finds the file and gets its metadata)
         _ = self.info(path)
 
@@ -618,3 +762,269 @@ class OSFFileSystem(ObjectFileSystem):
                     expected_checksum=expected_checksum,
                     actual_checksum=actual_checksum,
                 )
+
+    def put_file(
+        self,
+        lpath: str,
+        rpath: str,
+        callback: Optional[Callable[[int, int], None]] = None,
+        **kwargs: Any,
+    ) -> None:
+        """
+        Upload a local file to OSF.
+
+        Args:
+            lpath: Local file path
+            rpath: Remote OSF path
+            callback: Optional progress callback (bytes_uploaded, total_bytes)
+            **kwargs: Additional arguments
+
+        Raises:
+            OSFIntegrityError: If checksum verification fails
+            OSFQuotaExceededError: If storage quota exceeded
+            Other OSF exceptions
+        """
+        # Validate callback if provided
+        if callback is not None and not callable(callback):
+            raise TypeError("callback must be callable")
+
+        # Get file size to determine upload strategy
+        file_size = os.path.getsize(lpath)
+        upload_strategy = determine_upload_strategy(
+            file_size, Config.OSF_UPLOAD_CHUNK_SIZE
+        )
+
+        if upload_strategy == "single":
+            self._put_file_simple(lpath, rpath, callback)
+        else:
+            self._put_file_chunked(lpath, rpath, callback)
+
+        # Verify checksum after upload
+        self._verify_upload_checksum(lpath, rpath)
+
+    def _put_file_simple(
+        self,
+        lpath: str,
+        rpath: str,
+        callback: Optional[Callable[[int, int], None]] = None,
+    ) -> None:
+        """Upload a small file using single PUT request."""
+        project_id, provider, file_path = self._resolve_path(rpath)
+
+        # Get upload URL
+        upload_url = self._get_upload_url(project_id, provider, file_path)
+
+        # Upload file
+        file_size = os.path.getsize(lpath)
+        with open(lpath, "rb") as f:
+            self.client.upload_file(upload_url, f, callback, file_size)
+
+        # Invoke final callback if provided
+        if callback:
+            try:
+                callback(file_size, file_size)
+            except Exception:
+                pass
+
+    def _put_file_chunked(
+        self,
+        lpath: str,
+        rpath: str,
+        callback: Optional[Callable[[int, int], None]] = None,
+    ) -> None:
+        """Upload a large file using streaming PUT (not multi-request chunking).
+
+        Note: OSF doesn't support true multi-request chunked uploads. Instead,
+        we stream the file in a single PUT request for memory efficiency.
+        """
+        project_id, provider, file_path = self._resolve_path(rpath)
+
+        # Get upload URL
+        upload_url = self._get_upload_url(project_id, provider, file_path)
+
+        # Get file size
+        file_size = os.path.getsize(lpath)
+
+        # Upload file with streaming for memory efficiency
+        with open(lpath, "rb") as f:
+            self.client.upload_file(upload_url, f, callback, file_size)
+
+    def _get_upload_url(self, project_id: str, provider: str, file_path: str) -> str:
+        """Get upload URL for a file (existing or new)."""
+        parent_path = get_directory(file_path)
+        filename = get_filename(file_path)
+
+        # List parent directory to check if file exists
+        parent_api_url = path_to_api_url(project_id, provider, parent_path)
+        try:
+            response = self.client.get(parent_api_url)
+            data = response.json()
+
+            # Check if file exists
+            if "data" in data:
+                items = data["data"]
+                for item in items:
+                    item_name = item.get("attributes", {}).get("name", "")
+                    if item_name == filename:
+                        # File exists, return its upload URL from links
+                        links = item.get("links", {})
+                        upload_url = links.get("upload")
+                        if upload_url:
+                            return upload_url
+        except OSFNotFoundError:
+            # Parent directory doesn't exist - that's okay for new files
+            # OSF will create directories implicitly when we upload
+            pass
+
+        # File doesn't exist, construct WaterButler upload URL for new files
+        # Format: https://files.osf.io/v1/resources/{project}/providers/{provider}/{path}?kind=file
+        base_url = (
+            f"https://files.osf.io/v1/resources/{project_id}/providers/{provider}"
+        )
+        if parent_path:
+            waterbutler_url = f"{base_url}/{parent_path}/?kind=file&name={filename}"
+        else:
+            waterbutler_url = f"{base_url}/?kind=file&name={filename}"
+
+        return waterbutler_url
+
+    def _verify_upload_checksum(self, lpath: str, rpath: str) -> None:
+        """Verify uploaded file checksum matches local file."""
+        # Compute local checksum
+        with open(lpath, "rb") as f:
+            local_checksum = compute_upload_checksum(f)
+
+        # Get remote file info
+        remote_info = self.info(rpath)
+        remote_checksum = remote_info.get("checksum")
+
+        if remote_checksum and local_checksum != remote_checksum:
+            raise OSFIntegrityError(
+                f"Checksum mismatch after upload for {rpath}: "
+                f"expected {local_checksum}, got {remote_checksum}",
+                expected_checksum=local_checksum,
+                actual_checksum=remote_checksum,
+            )
+
+    def put(
+        self,
+        file_obj: BinaryIO,
+        rpath: str,
+        callback: Optional[Callable[[int, int], None]] = None,
+        **kwargs: Any,
+    ) -> None:
+        """
+        Upload a file-like object to OSF.
+
+        Args:
+            file_obj: File-like object to upload
+            rpath: Remote OSF path
+            callback: Optional progress callback (bytes_uploaded, total_bytes)
+            **kwargs: Additional arguments
+        """
+        # Validate callback if provided
+        if callback is not None and not callable(callback):
+            raise TypeError("callback must be callable")
+
+        project_id, provider, file_path = self._resolve_path(rpath)
+
+        # Get upload URL
+        upload_url = self._get_upload_url(project_id, provider, file_path)
+
+        # Try to get file size
+        try:
+            file_size = get_file_size(file_obj)
+        except (AttributeError, OSError):
+            # File object doesn't support size - read into memory
+            data = file_obj.read()
+            file_size = len(data)
+            file_obj = io.BytesIO(data)
+
+        # Upload
+        self.client.upload_file(upload_url, file_obj, callback, file_size)
+
+    def mkdir(self, path: str, create_parents: bool = True, **kwargs: Any) -> None:
+        """
+        Create a directory (no-op on OSF - directories are virtual).
+
+        Args:
+            path: Directory path
+            create_parents: Ignored (OSF creates implicitly)
+            **kwargs: Additional arguments
+        """
+        # OSF doesn't have real directories - they're inferred from file paths
+        # This is a no-op that always succeeds
+        pass
+
+    def rm(self, path: str, recursive: bool = False, **kwargs: Any) -> None:
+        """
+        Delete a file or directory from OSF.
+
+        Args:
+            path: Path to delete
+            recursive: If True, delete directory contents recursively
+            **kwargs: Additional arguments
+
+        Raises:
+            OSFNotFoundError: If path doesn't exist
+        """
+        # Check if path exists and get its type
+        try:
+            info = self.info(path)
+        except OSFNotFoundError:
+            # Path doesn't exist - that's okay for delete
+            return
+
+        if info["type"] == "directory":
+            if recursive:
+                # List and delete all files in directory
+                items = self.ls(path, detail=True)
+                for item in items:
+                    self.rm(item["name"], recursive=True)
+            # OSF directories are virtual - nothing to delete
+            return
+
+        # Delete file
+        project_id, provider, file_path = self._resolve_path(path)
+        parent_path = get_directory(file_path)
+        filename = get_filename(file_path)
+
+        # Get file's delete URL
+        parent_api_url = path_to_api_url(project_id, provider, parent_path)
+        response = self.client.get(parent_api_url)
+        data = response.json()
+
+        if "data" in data:
+            items = data["data"]
+            for item in items:
+                item_name = item.get("attributes", {}).get("name", "")
+                if item_name == filename:
+                    # Found file, get delete URL
+                    links = item.get("links", {})
+                    delete_url = links.get("delete") or links.get("upload")
+                    if delete_url:
+                        self.client.delete(delete_url)
+                    return
+
+        raise OSFNotFoundError(f"File not found: {path}")
+
+    def rm_file(self, path: str, **kwargs: Any) -> None:
+        """
+        Delete a single file.
+
+        Args:
+            path: File path
+            **kwargs: Additional arguments
+        """
+        self.rm(path, recursive=False, **kwargs)
+
+    def rmdir(self, path: str, **kwargs: Any) -> None:
+        """
+        Remove a directory (no-op on OSF - directories are virtual).
+
+        Args:
+            path: Directory path
+            **kwargs: Additional arguments
+        """
+        # OSF directories are virtual - this is a no-op
+        pass

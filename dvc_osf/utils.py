@@ -1,9 +1,14 @@
 """Utility functions for DVC-OSF."""
 
-from typing import Optional, Tuple
+import hashlib
+import logging
+import os
+from typing import BinaryIO, Callable, Iterator, Optional, Tuple
 from urllib.parse import quote, urlparse
 
 from .config import Config
+
+logger = logging.getLogger(__name__)
 
 
 def parse_osf_url(url: str) -> Tuple[str, str, str]:
@@ -251,3 +256,175 @@ def validate_osf_url(url: str) -> None:
         # parse_osf_url already does validation
     except Exception as e:
         raise ValueError(f"Invalid OSF URL '{url}': {e}") from e
+
+
+def compute_upload_checksum(file_obj: BinaryIO) -> str:
+    """
+    Compute MD5 checksum of a file during upload.
+
+    Args:
+        file_obj: File-like object to compute checksum for
+
+    Returns:
+        MD5 checksum as hex string
+    """
+    md5 = hashlib.md5()
+    chunk_size = Config.CHUNK_SIZE
+
+    # Save current position
+    start_pos = file_obj.tell()
+
+    # Read file in chunks
+    while True:
+        chunk = file_obj.read(chunk_size)
+        if not chunk:
+            break
+        md5.update(chunk)
+
+    # Reset file position
+    file_obj.seek(start_pos)
+
+    return md5.hexdigest()
+
+
+def chunk_file(file_obj: BinaryIO, chunk_size: int) -> Iterator[Tuple[bytes, int, int]]:
+    """
+    Generator that yields file chunks with byte positions.
+
+    Args:
+        file_obj: File-like object to chunk
+        chunk_size: Size of each chunk in bytes
+
+    Yields:
+        Tuple of (chunk_data, start_byte, end_byte)
+    """
+    start_byte = 0
+
+    while True:
+        chunk = file_obj.read(chunk_size)
+        if not chunk:
+            break
+
+        end_byte = start_byte + len(chunk) - 1
+        yield chunk, start_byte, end_byte
+
+        start_byte += len(chunk)
+
+
+def get_file_size(file_obj: BinaryIO) -> int:
+    """
+    Get size of a file object.
+
+    Args:
+        file_obj: File-like object
+
+    Returns:
+        File size in bytes
+    """
+    # Save current position
+    current_pos = file_obj.tell()
+
+    # Seek to end to get size
+    file_obj.seek(0, os.SEEK_END)
+    size = file_obj.tell()
+
+    # Restore original position
+    file_obj.seek(current_pos)
+
+    return size
+
+
+def determine_upload_strategy(file_size: int, chunk_threshold: int) -> str:
+    """
+    Determine whether to use single or chunked upload based on file size.
+
+    Args:
+        file_size: Size of file in bytes
+        chunk_threshold: Threshold for chunked uploads
+
+    Returns:
+        'single' or 'chunked'
+    """
+    if file_size < chunk_threshold:
+        return "single"
+    else:
+        return "chunked"
+
+
+def validate_chunk_size(chunk_size: int) -> int:
+    """
+    Validate and bound chunk size within acceptable limits.
+
+    Args:
+        chunk_size: Desired chunk size in bytes
+
+    Returns:
+        Validated chunk size (bounded by min/max)
+    """
+    if chunk_size < Config.UPLOAD_CHUNK_MIN_SIZE:
+        return Config.UPLOAD_CHUNK_MIN_SIZE
+    elif chunk_size > Config.UPLOAD_CHUNK_MAX_SIZE:
+        return Config.UPLOAD_CHUNK_MAX_SIZE
+    else:
+        return chunk_size
+
+
+def format_bytes(num_bytes: int) -> str:
+    """
+    Format byte count as human-readable string.
+
+    Args:
+        num_bytes: Number of bytes
+
+    Returns:
+        Formatted string (e.g., '1.5 MB', '2.3 GB')
+    """
+    size = float(num_bytes)
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if size < 1024.0:
+            return f"{size:.1f} {unit}"
+        size /= 1024.0
+
+    return f"{size:.1f} PB"
+
+
+class ProgressTracker:
+    """Track and report upload progress."""
+
+    def __init__(
+        self, total_size: int, callback: Optional[Callable[[int, int], None]] = None
+    ):
+        """
+        Initialize progress tracker.
+
+        Args:
+            total_size: Total size in bytes
+            callback: Optional callback function (bytes_uploaded, total_bytes)
+        """
+        self.total_size = total_size
+        self.bytes_uploaded = 0
+        self.callback = callback
+
+    def update(self, bytes_count: int) -> None:
+        """
+        Update progress.
+
+        Args:
+            bytes_count: Number of bytes uploaded in this update
+        """
+        self.bytes_uploaded += bytes_count
+
+        if self.callback:
+            try:
+                self.callback(self.bytes_uploaded, self.total_size)
+            except Exception as e:
+                # Don't let callback errors fail the upload
+                logger.warning(f"Progress callback error: {e}")
+
+    def complete(self) -> None:
+        """Mark upload as complete."""
+        if self.callback:
+            try:
+                self.callback(self.total_size, self.total_size)
+            except Exception as e:
+                logger.warning(f"Progress callback error on completion: {e}")

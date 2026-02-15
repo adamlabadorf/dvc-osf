@@ -167,7 +167,7 @@ class OSFAPIError(OSFException):
 class OSFIntegrityError(OSFException):
     """Raised when file checksum verification fails."""
 
-    retryable: bool = False
+    retryable: bool = True  # May be transient corruption
 
     def __init__(
         self,
@@ -186,3 +186,91 @@ class OSFIntegrityError(OSFException):
         super().__init__(message)
         self.expected_checksum = expected_checksum
         self.actual_checksum = actual_checksum
+
+
+class OSFQuotaExceededError(OSFException):
+    """Raised when OSF storage quota is exceeded (413)."""
+
+    retryable: bool = False
+
+    def __init__(
+        self,
+        message: str = "OSF storage quota exceeded.",
+        status_code: Optional[int] = None,
+        response: Optional[Any] = None,
+        bytes_uploaded: Optional[int] = None,
+        total_size: Optional[int] = None,
+    ) -> None:
+        """
+        Initialize quota exceeded error.
+
+        Args:
+            message: Error message
+            status_code: HTTP status code (413)
+            response: HTTP response object
+            bytes_uploaded: Number of bytes uploaded before failure
+            total_size: Total size of file being uploaded
+        """
+        super().__init__(message)
+        self.status_code = status_code
+        self.response = response
+        self.bytes_uploaded = bytes_uploaded
+        self.total_size = total_size
+
+
+class OSFFileLockedError(OSFPermissionError):
+    """Raised when file is locked for modification (423)."""
+
+    retryable: bool = False
+
+    def __init__(
+        self,
+        message: str = "File is locked and cannot be modified.",
+        status_code: Optional[int] = None,
+        response: Optional[Any] = None,
+        bytes_uploaded: Optional[int] = None,
+        total_size: Optional[int] = None,
+    ) -> None:
+        """
+        Initialize file locked error.
+
+        Args:
+            message: Error message
+            status_code: HTTP status code (423)
+            response: HTTP response object
+            bytes_uploaded: Number of bytes uploaded before failure
+            total_size: Total size of file being uploaded
+        """
+        super().__init__(message, status_code, response)
+        self.bytes_uploaded = bytes_uploaded
+        self.total_size = total_size
+
+
+class OSFVersionConflictError(OSFException):
+    """Raised when file version conflict occurs (409)."""
+
+    retryable: bool = False
+
+    def __init__(
+        self,
+        message: str = "File version conflict detected.",
+        status_code: Optional[int] = None,
+        response: Optional[Any] = None,
+        bytes_uploaded: Optional[int] = None,
+        total_size: Optional[int] = None,
+    ) -> None:
+        """
+        Initialize version conflict error.
+
+        Args:
+            message: Error message
+            status_code: HTTP status code (409)
+            response: HTTP response object
+            bytes_uploaded: Number of bytes uploaded before failure
+            total_size: Total size of file being uploaded
+        """
+        super().__init__(message)
+        self.status_code = status_code
+        self.response = response
+        self.bytes_uploaded = bytes_uploaded
+        self.total_size = total_size
