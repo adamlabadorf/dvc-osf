@@ -43,24 +43,27 @@ This plugin bridges the gap between DVC's powerful data versioning capabilities 
 
 ## Features
 
-- **Read-only DVC remote storage support for OSF** (Phase 1 - current implementation)
-- Download versioned data from OSF storage
-- List and query files on OSF storage
+- **Full DVC remote storage support for OSF** (Phase 3 - current implementation)
+- ✅ **Read Operations**:
+  - Download versioned data from OSF storage
+  - List and query files on OSF storage
+  - Streaming downloads for large files with checksum verification
+- ✅ **Write Operations**:
+  - Upload files to OSF storage (`dvc push`)
+  - Delete files from OSF storage
+  - Automatic file versioning on overwrites
+  - Streaming uploads for large files with progress tracking
+  - MD5 checksum verification for data integrity
 - Authentication via OSF personal access tokens
 - Support for OSF projects and components
-- Streaming downloads for large files with checksum verification
 - Automatic retry logic with exponential backoff for network resilience
 - Compatible with DVC's caching features
 
 ### Current Limitations
 
-**This is a Phase 1 implementation with read-only operations:**
-- ✅ `dvc pull` - Download data from OSF
-- ✅ `dvc status` - Check data status
-- ✅ File reading and checksums
-- ❌ `dvc push` - Upload not yet supported (planned for Phase 2)
-- ❌ Write operations (planned for Phase 2)
 - ❌ OSF add-on storage providers (osfstorage only)
+- ❌ Subdirectory uploads (root-level uploads fully supported)
+- ❌ Append operations (not supported by OSF API)
 
 ## Installation
 
@@ -90,7 +93,9 @@ pip install -e .
 
 1. Log in to [OSF](https://osf.io)
 2. Go to Settings → Personal Access Tokens
-3. Create a new token with appropriate scopes (read/write access to your projects)
+3. Create a new token with appropriate scopes:
+   - `osf.full_read` - Required for downloading data
+   - `osf.full_write` - Required for uploading data
 4. Save the token securely
 
 ### 2. Configure DVC Remote
@@ -130,9 +135,15 @@ dvc remote add -d myosf osf://abc123/osfstorage
 
 ### 3. Use DVC as Normal
 
-Once configured, use DVC commands for **pulling data from OSF**:
+Once configured, use DVC commands for **both reading and writing data to/from OSF**:
 
 ```bash
+# Track data with DVC
+dvc add data/train.csv
+
+# Push data to OSF
+dvc push
+
 # Pull data from OSF
 dvc pull
 
@@ -143,32 +154,58 @@ dvc status -r myosf
 dvc list osf://abc123/osfstorage
 ```
 
-**Note:** Write operations (`dvc push`, `dvc add`) are not yet supported in Phase 1. You can upload data to OSF manually through the web interface or OSF API, then use `dvc pull` to download it.
-
-### Example Workflow (Read-Only)
+### Example Workflow (Full Read/Write Support)
 
 ```bash
 # Initialize DVC in your project
 dvc init
 
-# Add OSF remote (pointing to existing OSF project with data)
+# Add OSF remote (ensure token has write permissions)
 dvc remote add -d osf-storage osf://abc123/osfstorage
 dvc remote modify osf-storage token $OSF_TOKEN
 
-# Pull existing data from OSF
+# Track your data with DVC
+dvc add data/train.csv data/model.pkl
+
+# Push data to OSF
+dvc push
+
+# Commit the .dvc files to git
+git add data/train.csv.dvc data/model.pkl.dvc .gitignore
+git commit -m "Track training data and model on OSF"
+git push
+
+# On another machine, pull the data
+git pull
 dvc pull
+```
 
-# Track the downloaded data with DVC
-dvc add data/train.csv
+### Upload Progress Tracking
 
-# Commit the .dvc file to git
-git add data/train.csv.dvc .gitignore
-git commit -m "Track training dataset from OSF"
+For large file uploads, you can track progress programmatically:
+
+```python
+from dvc_osf.filesystem import OSFFileSystem
+
+fs = OSFFileSystem(token="your_token")
+
+def progress_callback(bytes_uploaded, total_bytes):
+    percent = (bytes_uploaded / total_bytes) * 100
+    print(f"Upload progress: {percent:.1f}%")
+
+# Upload with progress tracking
+fs.put_file(
+    "local_file.dat", 
+    "osf://abc123/osfstorage/remote_file.dat",
+    callback=progress_callback
+)
 ```
 
 ## Configuration Options
 
 Environment variables for customizing OSF client behavior:
+
+### Read/Download Configuration
 
 ```bash
 # OSF API endpoint (default: https://api.osf.io/v2)
@@ -190,6 +227,19 @@ export OSF_CHUNK_SIZE=16384
 export OSF_POOL_SIZE=20
 ```
 
+### Write/Upload Configuration
+
+```bash
+# Upload chunk size for streaming large files (default: 5MB / 5242880 bytes)
+export OSF_UPLOAD_CHUNK_SIZE=10485760  # 10MB
+
+# Upload timeout in seconds (default: 300)
+export OSF_UPLOAD_TIMEOUT=600  # 10 minutes for very large files
+
+# Write buffer size for file objects (default: 8192 bytes)
+export OSF_WRITE_BUFFER_SIZE=16384
+```
+
 ## Troubleshooting
 
 ### Authentication Errors
@@ -198,9 +248,41 @@ export OSF_POOL_SIZE=20
 
 **Solutions:**
 - Verify your token is valid at https://osf.io/settings/tokens/
-- Ensure token has `osf.full_read` scope
+- Ensure token has `osf.full_read` scope for downloads
+- Ensure token has `osf.full_write` scope for uploads
 - Check that token isn't expired
 - Make sure there's no whitespace in the token string
+
+### Upload Errors
+
+**Problem:** "Failed to upload file to OSF"
+
+**Solutions:**
+- Verify your token has `osf.full_write` scope
+- Check that you have write permissions for the OSF project
+- Ensure you're not exceeding OSF storage quotas
+- Try increasing upload timeout: `export OSF_UPLOAD_TIMEOUT=600`
+- Check file size limits (OSF supports files up to 5GB)
+
+### Quota Exceeded Errors
+
+**Problem:** "Storage quota exceeded"
+
+**Solutions:**
+- Check your OSF project storage usage at the project settings page
+- Delete unnecessary files from OSF to free up space
+- Contact OSF support for quota increases if needed
+- Consider using OSF's add-on storage providers (future feature)
+
+### Checksum Verification Errors
+
+**Problem:** "Checksum mismatch after upload"
+
+**Solutions:**
+- This usually indicates network corruption - the plugin will automatically retry
+- Check your network connection stability
+- Try uploading again - transient network issues often resolve on retry
+- If persistent, try reducing chunk size: `export OSF_UPLOAD_CHUNK_SIZE=1048576`
 
 ### File Not Found Errors
 
@@ -230,6 +312,15 @@ export OSF_POOL_SIZE=20
 - Wait for the rate limit to reset (plugin auto-retries with backoff)
 - Reduce concurrent operations
 - The plugin automatically handles rate limiting with exponential backoff
+
+### File Locking Errors
+
+**Problem:** "File is locked by another process"
+
+**Solutions:**
+- Wait for the other operation to complete
+- Check OSF web interface to see if file is being processed
+- This is usually temporary - retry after a few moments
 
 ## Architecture
 
@@ -366,18 +457,13 @@ If you use dvc-osf in your research, please cite:
 
 ## Roadmap
 
-### Phase 2 (Planned)
-- [ ] Write operations (`dvc push`)
-- [ ] File upload and modification support
-- [ ] Directory creation and management
-
-### Phase 3 (Future)
-- [ ] Support for OSF file versioning
-- [ ] Integration with OSF project metadata
+### Phase 4 (Future)
+- [ ] Subdirectory upload support (explicit folder creation)
 - [ ] Support for OSF add-on storage providers
 - [ ] Batch upload/download optimizations
-- [ ] Progress reporting for large transfers
 - [ ] Integration with OSF DOI minting
+- [ ] Parallel upload/download for multiple files
+- [ ] Resume interrupted uploads
 
 ## FAQ
 
@@ -391,10 +477,16 @@ A: Yes, OSF provides free storage for research projects, with reasonable usage l
 A: Yes, the plugin works with both public and private OSF projects, as long as you have the appropriate access permissions.
 
 **Q: Can I upload data to OSF with this plugin?**  
-A: Not yet. Phase 1 is read-only. Upload data via the OSF web interface or API, then use `dvc pull`. Write operations are planned for Phase 2.
+A: Yes! Phase 3 includes full write operation support. Use `dvc push` to upload data to OSF. Make sure your token has the `osf.full_write` scope.
+
+**Q: Does the plugin handle large file uploads?**  
+A: Yes, the plugin uses streaming uploads for large files (>5MB by default), which keeps memory usage low and provides progress tracking. You can configure the chunk size with `OSF_UPLOAD_CHUNK_SIZE`.
+
+**Q: What happens when I upload a file that already exists on OSF?**  
+A: OSF automatically creates a new version of the file. The plugin doesn't delete old versions - you can access them through the OSF web interface.
 
 **Q: Does this support OSF add-on storage providers (like Dropbox, Google Drive)?**  
-A: Not currently. Phase 1 supports `osfstorage` only. Add-on provider support is planned for future phases.
+A: Not currently. The plugin supports `osfstorage` only. Add-on provider support is planned for future releases.
 
 ---
 
