@@ -475,3 +475,145 @@ class TestErrorMessageExtraction:
             client.get("/test")
 
         assert "Resource not found" in str(exc_info.value)
+
+
+class TestOSFAPIClientUploadMethods:
+    """Tests for OSF API client upload methods."""
+
+    @patch("dvc_osf.api.requests.Session.request")
+    def test_upload_file_success(self, mock_request):
+        """Test successful file upload."""
+        import io
+
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"data": {}}
+        mock_request.return_value = mock_response
+
+        client = OSFAPIClient(token="test_token")
+        file_obj = io.BytesIO(b"test data")
+
+        response = client.upload_file("https://osf.io/upload", file_obj, None, 9)
+
+        assert response.status_code == 200
+        mock_request.assert_called_once()
+
+    @patch("dvc_osf.api.requests.Session.request")
+    def test_upload_chunk_success(self, mock_request):
+        """Test successful chunk upload."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"data": {}}
+        mock_request.return_value = mock_response
+
+        client = OSFAPIClient(token="test_token")
+        chunk_data = b"x" * 1024
+
+        response = client.upload_chunk(
+            "https://osf.io/upload", chunk_data, 0, 1023, 1024
+        )
+
+        assert response.status_code == 200
+        # Verify Content-Range header
+        call_kwargs = mock_request.call_args[1]
+        assert "Content-Range" in call_kwargs["headers"]
+        assert call_kwargs["headers"]["Content-Range"] == "bytes 0-1023/1024"
+
+    @patch("dvc_osf.api.requests.Session.request")
+    def test_upload_with_quota_exceeded(self, mock_request):
+        """Test upload with quota exceeded error."""
+        from dvc_osf.exceptions import OSFQuotaExceededError
+
+        mock_response = Mock()
+        mock_response.status_code = 413
+        mock_response.json.return_value = {"detail": "Quota exceeded"}
+        mock_request.return_value = mock_response
+
+        client = OSFAPIClient(token="test_token")
+        import io
+
+        file_obj = io.BytesIO(b"test data")
+
+        with pytest.raises(OSFQuotaExceededError):
+            client.upload_file("https://osf.io/upload", file_obj, None, 9)
+
+    @patch("dvc_osf.api.requests.Session.request")
+    def test_upload_with_file_locked(self, mock_request):
+        """Test upload with file locked error."""
+        from dvc_osf.exceptions import OSFFileLockedError
+
+        mock_response = Mock()
+        mock_response.status_code = 423
+        mock_response.json.return_value = {"detail": "File locked"}
+        mock_request.return_value = mock_response
+
+        client = OSFAPIClient(token="test_token")
+        import io
+
+        file_obj = io.BytesIO(b"test data")
+
+        with pytest.raises(OSFFileLockedError):
+            client.upload_file("https://osf.io/upload", file_obj, None, 9)
+
+    @patch("dvc_osf.api.requests.Session.request")
+    def test_upload_with_version_conflict(self, mock_request):
+        """Test upload with version conflict error."""
+        from dvc_osf.exceptions import OSFVersionConflictError
+
+        mock_response = Mock()
+        mock_response.status_code = 409
+        mock_response.json.return_value = {"detail": "Version conflict"}
+        mock_request.return_value = mock_response
+
+        client = OSFAPIClient(token="test_token")
+        import io
+
+        file_obj = io.BytesIO(b"test data")
+
+        with pytest.raises(OSFVersionConflictError):
+            client.upload_file("https://osf.io/upload", file_obj, None, 9)
+
+    @patch("dvc_osf.api.requests.Session.request")
+    def test_upload_retry_on_500(self, mock_request):
+        """Test upload retries on 500 error."""
+        # First call fails with 500, second succeeds
+        mock_response_fail = Mock()
+        mock_response_fail.status_code = 500
+        mock_response_fail.json.return_value = {"detail": "Server error"}
+
+        mock_response_success = Mock()
+        mock_response_success.status_code = 200
+        mock_response_success.json.return_value = {"data": {}}
+
+        mock_request.side_effect = [mock_response_fail, mock_response_success]
+
+        client = OSFAPIClient(token="test_token")
+        import io
+
+        file_obj = io.BytesIO(b"test data")
+
+        response = client.upload_file("https://osf.io/upload", file_obj, None, 9)
+
+        assert response.status_code == 200
+        assert mock_request.call_count == 2
+
+    @patch("dvc_osf.api.requests.Session.request")
+    def test_upload_no_retry_on_409(self, mock_request):
+        """Test upload does not retry on 409 conflict."""
+        from dvc_osf.exceptions import OSFVersionConflictError
+
+        mock_response = Mock()
+        mock_response.status_code = 409
+        mock_response.json.return_value = {"detail": "Conflict"}
+        mock_request.return_value = mock_response
+
+        client = OSFAPIClient(token="test_token")
+        import io
+
+        file_obj = io.BytesIO(b"test data")
+
+        with pytest.raises(OSFVersionConflictError):
+            client.upload_file("https://osf.io/upload", file_obj, None, 9)
+
+        # Should only be called once (no retries)
+        assert mock_request.call_count == 1

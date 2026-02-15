@@ -116,3 +116,42 @@ class TestConfig:
 
         # Restore original
         importlib.reload(config)
+
+    def test_default_upload_chunk_size(self):
+        """Test default upload chunk size."""
+        assert Config.OSF_UPLOAD_CHUNK_SIZE == 5 * 1024 * 1024  # 5MB
+
+    def test_default_upload_timeout(self):
+        """Test default upload timeout."""
+        assert Config.OSF_UPLOAD_TIMEOUT == 300  # 5 minutes
+
+    def test_upload_chunk_size_min_max(self):
+        """Test upload chunk size min/max bounds."""
+        assert Config.UPLOAD_CHUNK_MIN_SIZE == 1 * 1024 * 1024  # 1MB
+        assert Config.UPLOAD_CHUNK_MAX_SIZE == 100 * 1024 * 1024  # 100MB
+
+    def test_env_var_upload_chunk_size(self, monkeypatch):
+        """Test upload chunk size override via environment variable."""
+        monkeypatch.setenv("OSF_UPLOAD_CHUNK_SIZE", str(10 * 1024 * 1024))
+        import importlib
+
+        from dvc_osf import config
+
+        importlib.reload(config)
+        assert config.Config.OSF_UPLOAD_CHUNK_SIZE == 10 * 1024 * 1024
+
+        # Restore original
+        importlib.reload(config)
+
+    def test_env_var_upload_timeout(self, monkeypatch):
+        """Test upload timeout override via environment variable."""
+        monkeypatch.setenv("OSF_UPLOAD_TIMEOUT", "600")
+        import importlib
+
+        from dvc_osf import config
+
+        importlib.reload(config)
+        assert config.Config.OSF_UPLOAD_TIMEOUT == 600
+
+        # Restore original
+        importlib.reload(config)

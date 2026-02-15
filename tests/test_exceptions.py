@@ -5,10 +5,13 @@ from dvc_osf.exceptions import (
     OSFAuthenticationError,
     OSFConnectionError,
     OSFException,
+    OSFFileLockedError,
     OSFIntegrityError,
     OSFNotFoundError,
     OSFPermissionError,
+    OSFQuotaExceededError,
     OSFRateLimitError,
+    OSFVersionConflictError,
 )
 
 
@@ -232,7 +235,113 @@ class TestOSFIntegrityError:
         assert exc.expected_checksum == "abc123"
         assert exc.actual_checksum == "def456"
 
-    def test_not_retryable(self):
-        """Test that integrity errors are not retryable."""
+    def test_retryable(self):
+        """Test that integrity errors are retryable."""
         exc = OSFIntegrityError("mismatch")
+        assert exc.retryable is True
+
+
+class TestOSFQuotaExceededError:
+    """Tests for OSFQuotaExceededError."""
+
+    def test_inheritance(self):
+        """Test inheritance from OSFException."""
+        exc = OSFQuotaExceededError()
+        assert isinstance(exc, OSFException)
+
+    def test_default_message(self):
+        """Test default error message."""
+        exc = OSFQuotaExceededError()
+        assert "quota exceeded" in exc.message.lower()
+
+    def test_custom_message(self):
+        """Test custom error message."""
+        exc = OSFQuotaExceededError("Custom quota error")
+        assert exc.message == "Custom quota error"
+
+    def test_status_code(self):
+        """Test status_code attribute."""
+        exc = OSFQuotaExceededError(status_code=413)
+        assert exc.status_code == 413
+
+    def test_bytes_uploaded(self):
+        """Test bytes_uploaded attribute."""
+        exc = OSFQuotaExceededError(bytes_uploaded=1024000, total_size=2048000)
+        assert exc.bytes_uploaded == 1024000
+        assert exc.total_size == 2048000
+
+    def test_not_retryable(self):
+        """Test that quota exceeded errors are not retryable."""
+        exc = OSFQuotaExceededError()
+        assert exc.retryable is False
+
+
+class TestOSFFileLockedError:
+    """Tests for OSFFileLockedError."""
+
+    def test_inheritance(self):
+        """Test inheritance from OSFPermissionError."""
+        exc = OSFFileLockedError()
+        assert isinstance(exc, OSFPermissionError)
+        assert isinstance(exc, OSFException)
+
+    def test_default_message(self):
+        """Test default error message."""
+        exc = OSFFileLockedError()
+        assert "locked" in exc.message.lower()
+
+    def test_custom_message(self):
+        """Test custom error message."""
+        exc = OSFFileLockedError("Custom lock error")
+        assert exc.message == "Custom lock error"
+
+    def test_status_code(self):
+        """Test status_code attribute."""
+        exc = OSFFileLockedError(status_code=423)
+        assert exc.status_code == 423
+
+    def test_bytes_uploaded(self):
+        """Test bytes_uploaded attribute."""
+        exc = OSFFileLockedError(bytes_uploaded=512000, total_size=1024000)
+        assert exc.bytes_uploaded == 512000
+        assert exc.total_size == 1024000
+
+    def test_not_retryable(self):
+        """Test that file locked errors are not retryable."""
+        exc = OSFFileLockedError()
+        assert exc.retryable is False
+
+
+class TestOSFVersionConflictError:
+    """Tests for OSFVersionConflictError."""
+
+    def test_inheritance(self):
+        """Test inheritance from OSFException."""
+        exc = OSFVersionConflictError()
+        assert isinstance(exc, OSFException)
+
+    def test_default_message(self):
+        """Test default error message."""
+        exc = OSFVersionConflictError()
+        assert "conflict" in exc.message.lower()
+
+    def test_custom_message(self):
+        """Test custom error message."""
+        exc = OSFVersionConflictError("Custom conflict error")
+        assert exc.message == "Custom conflict error"
+
+    def test_status_code(self):
+        """Test status_code attribute."""
+        exc = OSFVersionConflictError(status_code=409)
+        assert exc.status_code == 409
+
+    def test_bytes_uploaded(self):
+        """Test bytes_uploaded attribute."""
+        exc = OSFVersionConflictError(bytes_uploaded=256000, total_size=512000)
+        assert exc.bytes_uploaded == 256000
+        assert exc.total_size == 512000
+
+    def test_not_retryable(self):
+        """Test that version conflict errors are not retryable."""
+        exc = OSFVersionConflictError()
         assert exc.retryable is False

@@ -1,9 +1,17 @@
 """Tests for OSF utility functions."""
 
+import io
+
 import pytest
 
 from dvc_osf.utils import (
+    ProgressTracker,
+    chunk_file,
+    compute_upload_checksum,
+    determine_upload_strategy,
+    format_bytes,
     get_directory,
+    get_file_size,
     get_filename,
     get_parent,
     join_path,
@@ -11,6 +19,7 @@ from dvc_osf.utils import (
     parse_osf_url,
     path_to_api_url,
     serialize_path,
+    validate_chunk_size,
     validate_osf_url,
 )
 
@@ -277,3 +286,229 @@ class TestValidateOSFUrl:
         """Test that missing project ID raises ValueError."""
         with pytest.raises(ValueError, match="Invalid OSF URL"):
             validate_osf_url("osf:///osfstorage/file.csv")
+
+
+class TestComputeUploadChecksum:
+    """Tests for compute_upload_checksum function."""
+
+    def test_compute_checksum_simple(self):
+        """Test computing checksum for simple content."""
+        data = b"Hello, World!"
+        file_obj = io.BytesIO(data)
+        checksum = compute_upload_checksum(file_obj)
+        assert checksum == "65a8e27d8879283831b664bd8b7f0ad4"
+
+    def test_compute_checksum_empty(self):
+        """Test computing checksum for empty content."""
+        file_obj = io.BytesIO(b"")
+        checksum = compute_upload_checksum(file_obj)
+        assert checksum == "d41d8cd98f00b204e9800998ecf8427e"
+
+    def test_compute_checksum_large(self):
+        """Test computing checksum for large content."""
+        data = b"x" * (10 * 1024 * 1024)  # 10MB
+        file_obj = io.BytesIO(data)
+        checksum = compute_upload_checksum(file_obj)
+        assert len(checksum) == 32  # MD5 is 32 hex chars
+
+
+class TestChunkFile:
+    """Tests for chunk_file function."""
+
+    def test_chunk_single(self):
+        """Test chunking file smaller than chunk size."""
+        data = b"Hello, World!"
+        file_obj = io.BytesIO(data)
+        chunks = list(chunk_file(file_obj, chunk_size=1024))
+
+        assert len(chunks) == 1
+        chunk_data, start, end = chunks[0]
+        assert chunk_data == data
+        assert start == 0
+        assert end == len(data) - 1
+
+    def test_chunk_multiple(self):
+        """Test chunking file larger than chunk size."""
+        data = b"x" * 1000
+        file_obj = io.BytesIO(data)
+        chunks = list(chunk_file(file_obj, chunk_size=300))
+
+        assert len(chunks) == 4  # 300 + 300 + 300 + 100
+
+        # Check first chunk
+        chunk_data, start, end = chunks[0]
+        assert len(chunk_data) == 300
+        assert start == 0
+        assert end == 299
+
+        # Check last chunk
+        chunk_data, start, end = chunks[-1]
+        assert len(chunk_data) == 100
+        assert start == 900
+        assert end == 999
+
+    def test_chunk_exact_multiple(self):
+        """Test chunking file that's exact multiple of chunk size."""
+        data = b"x" * 600
+        file_obj = io.BytesIO(data)
+        chunks = list(chunk_file(file_obj, chunk_size=300))
+
+        assert len(chunks) == 2
+
+        for i, (chunk_data, start, end) in enumerate(chunks):
+            assert len(chunk_data) == 300
+            assert start == i * 300
+            assert end == (i + 1) * 300 - 1
+
+
+class TestGetFileSize:
+    """Tests for get_file_size function."""
+
+    def test_get_size_from_seekable(self):
+        """Test getting size from seekable file object."""
+        data = b"x" * 1024
+        file_obj = io.BytesIO(data)
+        size = get_file_size(file_obj)
+        assert size == 1024
+        # Check position is restored
+        assert file_obj.tell() == 0
+
+    def test_get_size_with_seek(self):
+        """Test getting size from file with current position."""
+        data = b"x" * 1024
+        file_obj = io.BytesIO(data)
+        file_obj.read(100)  # Advance position
+        size = get_file_size(file_obj)
+        assert size == 1024
+        # Position should be restored
+        assert file_obj.tell() == 100
+
+
+class TestDetermineUploadStrategy:
+    """Tests for determine_upload_strategy function."""
+
+    def test_strategy_small_file(self):
+        """Test strategy for small files."""
+        strategy = determine_upload_strategy(
+            1024 * 1024, chunk_threshold=5 * 1024 * 1024
+        )
+        assert strategy == "single"
+
+    def test_strategy_large_file(self):
+        """Test strategy for large files."""
+        strategy = determine_upload_strategy(
+            10 * 1024 * 1024, chunk_threshold=5 * 1024 * 1024
+        )
+        assert strategy == "chunked"
+
+    def test_strategy_exact_threshold(self):
+        """Test strategy at exact threshold."""
+        threshold = 5 * 1024 * 1024
+        strategy = determine_upload_strategy(threshold, chunk_threshold=threshold)
+        assert strategy == "chunked"  # Equal to threshold uses chunked
+
+
+class TestValidateChunkSize:
+    """Tests for validate_chunk_size function."""
+
+    def test_validate_valid_size(self):
+        """Test validation with valid chunk size."""
+        result = validate_chunk_size(5 * 1024 * 1024)
+        assert result == 5 * 1024 * 1024
+
+    def test_validate_too_small(self):
+        """Test validation bounds too small chunk size to minimum."""
+        result = validate_chunk_size(512 * 1024)  # 512KB, less than 1MB min
+        assert result == 1 * 1024 * 1024  # Should be bounded to 1MB
+
+    def test_validate_too_large(self):
+        """Test validation bounds too large chunk size to maximum."""
+        result = validate_chunk_size(200 * 1024 * 1024)  # 200MB, more than 100MB max
+        assert result == 100 * 1024 * 1024  # Should be bounded to 100MB
+
+    def test_validate_at_boundaries(self):
+        """Test validation at min/max boundaries."""
+        result_min = validate_chunk_size(1 * 1024 * 1024)  # Min: 1MB
+        assert result_min == 1 * 1024 * 1024
+
+        result_max = validate_chunk_size(100 * 1024 * 1024)  # Max: 100MB
+        assert result_max == 100 * 1024 * 1024
+
+
+class TestFormatBytes:
+    """Tests for format_bytes function."""
+
+    def test_format_bytes(self):
+        """Test formatting bytes."""
+        assert format_bytes(0) == "0.0 B"
+        assert format_bytes(1023) == "1023.0 B"
+
+    def test_format_kilobytes(self):
+        """Test formatting kilobytes."""
+        assert format_bytes(1024) == "1.0 KB"
+        assert format_bytes(2048) == "2.0 KB"
+
+    def test_format_megabytes(self):
+        """Test formatting megabytes."""
+        assert format_bytes(1024 * 1024) == "1.0 MB"
+        assert format_bytes(5 * 1024 * 1024) == "5.0 MB"
+
+    def test_format_gigabytes(self):
+        """Test formatting gigabytes."""
+        assert format_bytes(1024 * 1024 * 1024) == "1.0 GB"
+        assert format_bytes(int(2.5 * 1024 * 1024 * 1024)) == "2.5 GB"
+
+
+class TestProgressTracker:
+    """Tests for ProgressTracker class."""
+
+    def test_init(self):
+        """Test ProgressTracker initialization."""
+        tracker = ProgressTracker(1024, None)
+        assert tracker.total_size == 1024
+        assert tracker.bytes_uploaded == 0
+        assert tracker.callback is None
+
+    def test_update_without_callback(self):
+        """Test update without callback."""
+        tracker = ProgressTracker(1024, None)
+        tracker.update(512)
+        assert tracker.bytes_uploaded == 512
+
+    def test_update_with_callback(self):
+        """Test update with callback."""
+        calls = []
+
+        def callback(uploaded, total):
+            calls.append((uploaded, total))
+
+        tracker = ProgressTracker(1024, callback)
+        tracker.update(512)
+
+        assert len(calls) == 1
+        assert calls[0] == (512, 1024)
+
+    def test_complete(self):
+        """Test complete method."""
+        calls = []
+
+        def callback(uploaded, total):
+            calls.append((uploaded, total))
+
+        tracker = ProgressTracker(1024, callback)
+        tracker.update(512)
+        tracker.complete()
+
+        assert len(calls) == 2
+        assert calls[-1] == (1024, 1024)
+
+    def test_callback_exception_handled(self):
+        """Test that callback exceptions are handled gracefully."""
+
+        def bad_callback(uploaded, total):
+            raise ValueError("Callback error")
+
+        tracker = ProgressTracker(1024, bad_callback)
+        # Should not raise
+        tracker.update(512)
+        tracker.complete()
