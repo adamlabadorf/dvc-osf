@@ -1,86 +1,29 @@
 """Configuration management for DVC-OSF."""
 
-from typing import Any, Dict, Optional
+import os
 
 
-class OSFConfig:
-    """
-    Configuration handler for OSF filesystem.
+class Config:
+    """Configuration constants for OSF API client and filesystem."""
 
-    Manages configuration options for OSF integration,
-    including credentials, project settings, and connection options.
-    """
+    # OSF API configuration
+    API_BASE_URL = os.getenv("OSF_API_URL", "https://api.osf.io/v2")
 
-    def __init__(
-        self,
-        token: Optional[str] = None,
-        project_id: Optional[str] = None,
-        timeout: int = 30,
-        retries: int = 3,
-        **kwargs: Any,
-    ) -> None:
-        """
-        Initialize OSF configuration.
+    # Request timeout in seconds
+    DEFAULT_TIMEOUT = int(os.getenv("OSF_TIMEOUT", "30"))
 
-        Args:
-            token: OSF personal access token
-            project_id: Default OSF project ID
-            timeout: Request timeout in seconds
-            retries: Number of retry attempts for failed requests
-            **kwargs: Additional configuration options
-        """
-        self.token = token
-        self.project_id = project_id
-        self.timeout = timeout
-        self.retries = retries
-        self.extra_config = kwargs
+    # Retry configuration
+    MAX_RETRIES = int(os.getenv("OSF_MAX_RETRIES", "3"))
+    RETRY_BACKOFF = float(os.getenv("OSF_RETRY_BACKOFF", "2.0"))
 
-    @classmethod
-    def from_dict(cls, config: Dict[str, Any]) -> "OSFConfig":
-        """
-        Create configuration from dictionary.
+    # Streaming configuration
+    CHUNK_SIZE = int(os.getenv("OSF_CHUNK_SIZE", "8192"))
 
-        Args:
-            config: Configuration dictionary
+    # Connection pooling
+    CONNECTION_POOL_SIZE = int(os.getenv("OSF_POOL_SIZE", "10"))
 
-        Returns:
-            OSFConfig instance
-        """
-        return cls(**config)
+    # Storage provider default
+    DEFAULT_PROVIDER = "osfstorage"
 
-    def to_dict(self) -> Dict[str, Any]:
-        """
-        Convert configuration to dictionary.
-
-        Returns:
-            Configuration as dictionary
-        """
-        config = {
-            "token": self.token,
-            "project_id": self.project_id,
-            "timeout": self.timeout,
-            "retries": self.retries,
-        }
-        config.update(self.extra_config)
-        return config
-
-    @classmethod
-    def from_env(cls) -> "OSFConfig":
-        """
-        Create configuration from environment variables.
-
-        Reads OSF_TOKEN, OSF_PROJECT_ID, and other variables.
-
-        Returns:
-            OSFConfig instance with values from environment
-        """
-        raise NotImplementedError("Environment-based config not yet implemented")
-
-    def validate(self) -> bool:
-        """
-        Validate that configuration is complete and valid.
-
-        Returns:
-            True if configuration is valid
-        """
-        raise NotImplementedError("Configuration validation not yet implemented")
+    # Minimum project ID length
+    MIN_PROJECT_ID_LENGTH = 5

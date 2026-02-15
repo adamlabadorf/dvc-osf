@@ -1,75 +1,116 @@
 """Authentication handling for OSF."""
 
-from typing import Optional
+import os
+from typing import Any, Dict, Optional
+
+from .exceptions import OSFAuthenticationError
 
 
-class OSFAuth:
+def get_token(
+    token: Optional[str] = None,
+    dvc_config: Optional[Dict[str, Any]] = None,
+) -> str:
     """
-    Handler for OSF authentication.
+    Retrieve OSF authentication token from multiple sources with priority order.
 
-    Manages authentication tokens, credential storage,
-    and authentication flows for OSF API access.
+    Priority order (highest to lowest):
+    1. token parameter (explicit override)
+    2. DVC config (dvc_config dictionary)
+    3. OSF_TOKEN environment variable
+
+    Args:
+        token: Explicit token (highest priority)
+        dvc_config: DVC configuration dictionary (may contain 'token' key)
+
+    Returns:
+        OSF authentication token
+
+    Raises:
+        OSFAuthenticationError: If no token found in any source
     """
+    # Priority 1: Explicit parameter
+    if token:
+        return validate_token(token)
 
-    def __init__(self, token: Optional[str] = None) -> None:
-        """
-        Initialize OSF authentication handler.
+    # Priority 2: DVC config
+    if dvc_config and "token" in dvc_config:
+        token_from_config = dvc_config["token"]
+        if token_from_config:
+            return validate_token(token_from_config)
 
-        Args:
-            token: OSF personal access token
-        """
-        self.token = token
+    # Priority 3: Environment variable
+    token_from_env = os.getenv("OSF_TOKEN")
+    if token_from_env:
+        return validate_token(token_from_env)
 
-    @classmethod
-    def from_config(cls) -> "OSFAuth":
-        """
-        Create OSFAuth instance from configuration.
+    # No token found in any source
+    raise OSFAuthenticationError(
+        "OSF authentication token not found. "
+        "Please provide a token via: "
+        "(1) explicit 'token' parameter, "
+        "(2) DVC remote config: 'dvc remote modify <remote> token <token>', "
+        "or (3) OSF_TOKEN environment variable."
+    )
 
-        Reads authentication credentials from DVC config,
-        environment variables, or credential storage.
 
-        Returns:
-            Configured OSFAuth instance
-        """
-        raise NotImplementedError("OSF authentication not yet implemented")
+def validate_token(token: str) -> str:
+    """
+    Validate token format.
 
-    @classmethod
-    def from_env(cls) -> "OSFAuth":
-        """
-        Create OSFAuth instance from environment variables.
+    Performs basic validation to ensure the token is a non-empty string.
+    Does NOT make an API call to verify the token with OSF.
 
-        Looks for OSF_TOKEN or similar environment variables.
+    Args:
+        token: Token to validate
 
-        Returns:
-            OSFAuth instance with token from environment
-        """
-        raise NotImplementedError("OSF authentication not yet implemented")
+    Returns:
+        The validated token
 
-    def validate_token(self) -> bool:
-        """
-        Validate that the current token is valid.
+    Raises:
+        OSFAuthenticationError: If token is invalid
+    """
+    if not token or not isinstance(token, str):
+        raise OSFAuthenticationError(
+            "Invalid token format. Token must be a non-empty string."
+        )
 
-        Makes a test API call to verify token authentication.
+    # Remove whitespace
+    token = token.strip()
 
-        Returns:
-            True if token is valid, False otherwise
-        """
-        raise NotImplementedError("OSF authentication not yet implemented")
+    if not token:
+        raise OSFAuthenticationError(
+            "Invalid token format. Token must be a non-empty string."
+        )
 
-    def get_token(self) -> Optional[str]:
-        """
-        Get the authentication token.
+    return token
 
-        Returns:
-            OSF personal access token, or None if not configured
-        """
-        return self.token
 
-    def set_token(self, token: str) -> None:
-        """
-        Set the authentication token.
+def format_auth_header(token: str) -> Dict[str, str]:
+    """
+    Format authentication header for OSF API requests.
 
-        Args:
-            token: OSF personal access token
-        """
-        self.token = token
+    Args:
+        token: OSF personal access token
+
+    Returns:
+        Dictionary with Authorization header
+    """
+    return {"Authorization": f"Bearer {token}"}
+
+
+def redact_token_in_message(message: str, token: Optional[str]) -> str:
+    """
+    Redact token from error messages or logs to prevent exposure.
+
+    Args:
+        message: Message that may contain the token
+        token: Token to redact
+
+    Returns:
+        Message with token redacted
+    """
+    if not token:
+        return message
+
+    # Replace token with redacted placeholder
+    return message.replace(token, "[REDACTED]")
