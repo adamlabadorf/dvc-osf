@@ -43,13 +43,24 @@ This plugin bridges the gap between DVC's powerful data versioning capabilities 
 
 ## Features
 
-- Full DVC remote storage support for OSF
-- Upload and download versioned data to/from OSF storage
-- List and manage files on OSF storage
-- Copy operations within OSF storage
+- **Read-only DVC remote storage support for OSF** (Phase 1 - current implementation)
+- Download versioned data from OSF storage
+- List and query files on OSF storage
 - Authentication via OSF personal access tokens
 - Support for OSF projects and components
-- Compatible with DVC's caching and optimization features
+- Streaming downloads for large files with checksum verification
+- Automatic retry logic with exponential backoff for network resilience
+- Compatible with DVC's caching features
+
+### Current Limitations
+
+**This is a Phase 1 implementation with read-only operations:**
+- ✅ `dvc pull` - Download data from OSF
+- ✅ `dvc status` - Check data status
+- ✅ File reading and checksums
+- ❌ `dvc push` - Upload not yet supported (planned for Phase 2)
+- ❌ Write operations (planned for Phase 2)
+- ❌ OSF add-on storage providers (osfstorage only)
 
 ## Installation
 
@@ -88,74 +99,137 @@ Add an OSF remote to your DVC project:
 
 ```bash
 # Configure OSF remote with project ID
-dvc remote add -d myosf osf://PROJECT_ID/STORAGE_NAME
+dvc remote add -d myosf osf://PROJECT_ID/osfstorage
 
-# Set your OSF access token
+# Set your OSF access token (option 1: DVC config)
 dvc remote modify myosf token YOUR_OSF_TOKEN
+
+# Or use environment variable (option 2)
+export OSF_TOKEN=YOUR_OSF_TOKEN
 ```
 
+**URL Format:** `osf://PROJECT_ID/PROVIDER/PATH`
+
 Where:
-- `PROJECT_ID` is your OSF project identifier (found in the OSF project URL)
-- `STORAGE_NAME` is the storage provider name configured in your OSF project (e.g., `osfstorage`)
-- `YOUR_OSF_TOKEN` is your personal access token
+- `PROJECT_ID` is your OSF project identifier (found in the OSF project URL, e.g., "abc123")
+- `PROVIDER` is the storage provider (use `osfstorage` for OSF's native storage)
+- `PATH` (optional) is a subdirectory within the storage
+
+**Examples:**
+```bash
+# Root of osfstorage
+osf://abc123/osfstorage
+
+# Specific directory
+osf://abc123/osfstorage/data
+
+# With environment variable for token
+export OSF_TOKEN="your_token_here"
+dvc remote add -d myosf osf://abc123/osfstorage
+```
 
 ### 3. Use DVC as Normal
 
-Once configured, use DVC commands as you normally would:
+Once configured, use DVC commands for **pulling data from OSF**:
 
 ```bash
-# Add data to DVC tracking
-dvc add data/dataset.csv
-
-# Push data to OSF
-dvc push
-
 # Pull data from OSF
 dvc pull
 
 # Check remote status
 dvc status -r myosf
+
+# List remote files (if DVC supports it)
+dvc list osf://abc123/osfstorage
 ```
 
-### Example Workflow
+**Note:** Write operations (`dvc push`, `dvc add`) are not yet supported in Phase 1. You can upload data to OSF manually through the web interface or OSF API, then use `dvc pull` to download it.
+
+### Example Workflow (Read-Only)
 
 ```bash
 # Initialize DVC in your project
 dvc init
 
-# Add OSF remote
+# Add OSF remote (pointing to existing OSF project with data)
 dvc remote add -d osf-storage osf://abc123/osfstorage
 dvc remote modify osf-storage token $OSF_TOKEN
 
-# Track a dataset
+# Pull existing data from OSF
+dvc pull
+
+# Track the downloaded data with DVC
 dvc add data/train.csv
 
 # Commit the .dvc file to git
 git add data/train.csv.dvc .gitignore
-git commit -m "Add training dataset"
-
-# Push data to OSF
-dvc push
-
-# Share your project with collaborators
-# They can now pull the data from OSF
-dvc pull
+git commit -m "Track training dataset from OSF"
 ```
 
 ## Configuration Options
 
-Additional configuration options for the OSF remote:
+Environment variables for customizing OSF client behavior:
 
 ```bash
-# Set custom OSF API endpoint (for testing or private instances)
-dvc remote modify myosf endpoint_url https://api.osf.io/v2
+# OSF API endpoint (default: https://api.osf.io/v2)
+export OSF_API_URL=https://api.osf.io/v2
 
-# Configure connection timeout
-dvc remote modify myosf timeout 300
+# Request timeout in seconds (default: 30)
+export OSF_TIMEOUT=60
 
-# Enable retry on failure
-dvc remote modify myosf retry_count 3
+# Maximum retry attempts (default: 3)
+export OSF_MAX_RETRIES=5
+
+# Retry backoff multiplier (default: 2.0)
+export OSF_RETRY_BACKOFF=2.0
+
+# Download chunk size in bytes (default: 8192)
+export OSF_CHUNK_SIZE=16384
+
+# Connection pool size (default: 10)
+export OSF_POOL_SIZE=20
 ```
+
+## Troubleshooting
+
+### Authentication Errors
+
+**Problem:** "Authentication failed. Check your OSF token."
+
+**Solutions:**
+- Verify your token is valid at https://osf.io/settings/tokens/
+- Ensure token has `osf.full_read` scope
+- Check that token isn't expired
+- Make sure there's no whitespace in the token string
+
+### File Not Found Errors
+
+**Problem:** Files exist on OSF but aren't found by the plugin
+
+**Solutions:**
+- Verify the project ID is correct (check OSF project URL)
+- Ensure you're using `osfstorage` as the provider
+- Check that files are in the osfstorage provider (not add-on storage)
+- Verify you have read permissions for the OSF project
+
+### Network/Connection Errors
+
+**Problem:** "Failed to connect to OSF"
+
+**Solutions:**
+- Check your internet connection
+- Verify OSF isn't experiencing downtime: https://twitter.com/OSFramework
+- Try increasing timeout: `export OSF_TIMEOUT=120`
+- Check if you're behind a proxy that might block OSF API access
+
+### Rate Limiting
+
+**Problem:** "OSF API rate limit exceeded"
+
+**Solutions:**
+- Wait for the rate limit to reset (plugin auto-retries with backoff)
+- Reduce concurrent operations
+- The plugin automatically handles rate limiting with exponential backoff
 
 ## Architecture
 
@@ -292,14 +366,17 @@ If you use dvc-osf in your research, please cite:
 
 ## Roadmap
 
-Future enhancements may include:
+### Phase 2 (Planned)
+- [ ] Write operations (`dvc push`)
+- [ ] File upload and modification support
+- [ ] Directory creation and management
 
+### Phase 3 (Future)
 - [ ] Support for OSF file versioning
 - [ ] Integration with OSF project metadata
 - [ ] Support for OSF add-on storage providers
 - [ ] Batch upload/download optimizations
 - [ ] Progress reporting for large transfers
-- [ ] Support for OSF file previews and metadata
 - [ ] Integration with OSF DOI minting
 
 ## FAQ
@@ -313,14 +390,11 @@ A: Yes, OSF provides free storage for research projects, with reasonable usage l
 **Q: Can I use this with private OSF projects?**  
 A: Yes, the plugin works with both public and private OSF projects, as long as you have the appropriate access permissions.
 
-**Q: How do I migrate existing DVC data to OSF?**  
-A: Configure the OSF remote and use `dvc push -r osf-remote` to upload your data to OSF.
-
-**Q: What happens if I hit OSF storage limits?**  
-A: OSF has generous storage limits for individual projects. If you need more storage, contact OSF support or consider organizing data across multiple projects.
+**Q: Can I upload data to OSF with this plugin?**  
+A: Not yet. Phase 1 is read-only. Upload data via the OSF web interface or API, then use `dvc pull`. Write operations are planned for Phase 2.
 
 **Q: Does this support OSF add-on storage providers (like Dropbox, Google Drive)?**  
-A: Currently, the plugin focuses on native OSF storage. Support for add-on providers may be added in future versions.
+A: Not currently. Phase 1 supports `osfstorage` only. Add-on provider support is planned for future phases.
 
 ---
 
