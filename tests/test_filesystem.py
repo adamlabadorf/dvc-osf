@@ -4,7 +4,12 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from dvc_osf.exceptions import OSFIntegrityError, OSFNotFoundError
+from dvc_osf.exceptions import (
+    OSFIntegrityError,
+    OSFNotFoundError,
+    OSFConflictError,
+    OSFOperationNotSupportedError,
+)
 from dvc_osf.filesystem import OSFFile, OSFFileSystem
 
 
@@ -746,3 +751,428 @@ class TestOSFFileSystemWriteMethods:
 
         with pytest.raises(NotImplementedError):
             fs.open("osf://abc123/osfstorage/test.txt", mode="r+")
+
+
+class TestCopyOperations:
+    """Tests for cp() method."""
+
+    @patch("dvc_osf.filesystem.OSFAPIClient")
+    @patch("dvc_osf.filesystem.tempfile.mkstemp")
+    @patch("os.path.exists")
+    @patch("os.remove")
+    @patch("os.close")
+    def test_cp_single_file(
+        self, mock_close, mock_remove, mock_exists, mock_mkstemp, mock_client_class
+    ):
+        """Test copying a single file."""
+        # Setup mocks
+        mock_mkstemp.return_value = (42, "/tmp/test_temp")
+        mock_exists.return_value = True
+
+        mock_client = mock_client_class.return_value
+        fs = OSFFileSystem(token="test_token")
+
+        # Mock info() to return file metadata
+        with patch.object(fs, "info") as mock_info:
+            mock_info.side_effect = [
+                {"type": "file", "checksum": "abc123"},  # Source info
+                {"type": "file", "checksum": "abc123"},  # Dest info after copy
+            ]
+
+            # Mock get_file and put_file
+            with patch.object(fs, "get_file") as mock_get, patch.object(
+                fs, "put_file"
+            ) as mock_put, patch.object(fs, "exists") as mock_exists_check:
+                mock_exists_check.return_value = False  # Destination doesn't exist
+
+                # Execute copy
+                fs.cp(
+                    "osf://abc123/osfstorage/source.txt",
+                    "osf://abc123/osfstorage/dest.txt",
+                )
+
+                # Verify calls
+                mock_get.assert_called_once()
+                mock_put.assert_called_once()
+                mock_close.assert_called_once_with(42)
+                mock_remove.assert_called_once_with("/tmp/test_temp")
+
+    @patch("dvc_osf.filesystem.OSFAPIClient")
+    def test_cp_file_not_found(self, mock_client_class):
+        """Test cp raises OSFNotFoundError if source doesn't exist."""
+        fs = OSFFileSystem(token="test_token")
+
+        with patch.object(fs, "info") as mock_info:
+            mock_info.side_effect = OSFNotFoundError("Source not found")
+
+            with pytest.raises(OSFNotFoundError, match="Source not found"):
+                fs.cp(
+                    "osf://abc123/osfstorage/nonexistent.txt",
+                    "osf://abc123/osfstorage/dest.txt",
+                )
+
+    @patch("dvc_osf.filesystem.OSFAPIClient")
+    def test_cp_destination_exists_no_overwrite(self, mock_client_class):
+        """Test cp raises OSFConflictError if destination exists and overwrite=False."""
+        fs = OSFFileSystem(token="test_token")
+
+        with patch.object(fs, "info") as mock_info, patch.object(
+            fs, "exists"
+        ) as mock_exists:
+            mock_info.return_value = {"type": "file", "checksum": "abc123"}
+            mock_exists.return_value = True  # Destination exists
+
+            with pytest.raises(OSFConflictError, match="Destination exists"):
+                fs.cp(
+                    "osf://abc123/osfstorage/source.txt",
+                    "osf://abc123/osfstorage/dest.txt",
+                    overwrite=False,
+                )
+
+    @patch("dvc_osf.filesystem.OSFAPIClient")
+    @patch("dvc_osf.filesystem.tempfile.mkstemp")
+    @patch("os.path.exists")
+    @patch("os.remove")
+    @patch("os.close")
+    def test_cp_destination_exists_with_overwrite(
+        self, mock_close, mock_remove, mock_exists_os, mock_mkstemp, mock_client_class
+    ):
+        """Test cp succeeds if destination exists and overwrite=True."""
+        mock_mkstemp.return_value = (42, "/tmp/test_temp")
+        mock_exists_os.return_value = True
+
+        fs = OSFFileSystem(token="test_token")
+
+        with patch.object(fs, "info") as mock_info, patch.object(
+            fs, "exists"
+        ) as mock_exists, patch.object(fs, "get_file") as mock_get, patch.object(
+            fs, "put_file"
+        ) as mock_put:
+            mock_info.side_effect = [
+                {"type": "file", "checksum": "abc123"},  # Source
+                {"type": "file", "checksum": "abc123"},  # Dest after copy
+            ]
+            mock_exists.return_value = True  # Destination exists
+
+            # Should succeed with overwrite=True (default)
+            fs.cp(
+                "osf://abc123/osfstorage/source.txt",
+                "osf://abc123/osfstorage/dest.txt",
+                overwrite=True,
+            )
+
+            mock_put.assert_called_once()
+
+    @patch("dvc_osf.filesystem.OSFAPIClient")
+    def test_cp_cross_project(self, mock_client_class):
+        """Test cp raises OSFOperationNotSupportedError for cross-project copy."""
+        fs = OSFFileSystem(token="test_token")
+
+        with patch.object(fs, "info") as mock_info:
+            mock_info.return_value = {"type": "file", "checksum": "abc123"}
+
+            with pytest.raises(OSFOperationNotSupportedError, match="Cross-project"):
+                fs.cp(
+                    "osf://abc123/osfstorage/source.txt",
+                    "osf://xyz789/osfstorage/dest.txt",
+                )
+
+    @patch("dvc_osf.filesystem.OSFAPIClient")
+    def test_cp_recursive_directory(self, mock_client_class):
+        """Test recursive directory copy."""
+        fs = OSFFileSystem(token="test_token")
+
+        with patch.object(fs, "info") as mock_info, patch.object(
+            fs, "ls"
+        ) as mock_ls, patch.object(fs, "exists") as mock_exists, patch.object(
+            fs, "get_file"
+        ) as mock_get, patch.object(
+            fs, "put_file"
+        ) as mock_put:
+            # Mock info to return directory type first, then file types
+            mock_info.side_effect = [
+                {"type": "directory"},  # Source directory
+                {"type": "file", "checksum": "abc123"},  # file1 source
+                {"type": "file", "checksum": "abc123"},  # file1 dest
+                {"type": "file", "checksum": "def456"},  # file2 source
+                {"type": "file", "checksum": "def456"},  # file2 dest
+            ]
+
+            # Mock directory listing
+            from dvc_osf.utils import serialize_path
+
+            mock_ls.return_value = [
+                {
+                    "name": serialize_path("abc123", "osfstorage", "dir/file1.txt"),
+                    "type": "file",
+                },
+                {
+                    "name": serialize_path("abc123", "osfstorage", "dir/file2.txt"),
+                    "type": "file",
+                },
+            ]
+
+            mock_exists.return_value = False
+
+            with patch("dvc_osf.filesystem.tempfile.mkstemp") as mock_mkstemp, patch(
+                "os.path.exists"
+            ) as mock_exists_os, patch("os.remove") as mock_remove, patch(
+                "os.close"
+            ) as mock_close:
+                mock_mkstemp.return_value = (42, "/tmp/test_temp")
+                mock_exists_os.return_value = True
+
+                fs.cp(
+                    "osf://abc123/osfstorage/dir",
+                    "osf://abc123/osfstorage/newdir",
+                    recursive=True,
+                )
+
+                # Should have called ls to get directory contents
+                mock_ls.assert_called_once()
+                # Should have copied both files
+                assert mock_get.call_count == 2
+                assert mock_put.call_count == 2
+
+    @patch("dvc_osf.filesystem.OSFAPIClient")
+    def test_cp_empty_directory(self, mock_client_class):
+        """Test copying empty directory."""
+        fs = OSFFileSystem(token="test_token")
+
+        with patch.object(fs, "info") as mock_info, patch.object(fs, "ls") as mock_ls:
+            mock_info.return_value = {"type": "directory"}
+            mock_ls.return_value = []  # Empty directory
+
+            # Should succeed without error
+            fs.cp(
+                "osf://abc123/osfstorage/emptydir",
+                "osf://abc123/osfstorage/newdir",
+                recursive=True,
+            )
+
+            mock_ls.assert_called_once()
+
+
+class TestMoveOperations:
+    """Tests for mv() method."""
+
+    @patch("dvc_osf.filesystem.OSFAPIClient")
+    def test_mv_single_file(self, mock_client_class):
+        """Test moving a single file."""
+        fs = OSFFileSystem(token="test_token")
+
+        with patch.object(fs, "exists") as mock_exists, patch.object(
+            fs, "cp"
+        ) as mock_cp, patch.object(fs, "rm") as mock_rm:
+            mock_exists.side_effect = [
+                False,
+                True,
+            ]  # Dest doesn't exist, then exists after copy
+
+            fs.mv(
+                "osf://abc123/osfstorage/source.txt", "osf://abc123/osfstorage/dest.txt"
+            )
+
+            mock_cp.assert_called_once()
+            mock_rm.assert_called_once()
+
+    @patch("dvc_osf.filesystem.OSFAPIClient")
+    def test_mv_delete_fails(self, mock_client_class):
+        """Test mv logs warning but doesn't raise if delete fails."""
+        fs = OSFFileSystem(token="test_token")
+
+        with patch.object(fs, "exists") as mock_exists, patch.object(
+            fs, "cp"
+        ) as mock_cp, patch.object(fs, "rm") as mock_rm:
+            mock_exists.side_effect = [
+                False,
+                True,
+            ]  # Dest doesn't exist, then exists after copy
+            mock_rm.side_effect = OSFNotFoundError("Delete failed")
+
+            # Should not raise exception
+            fs.mv(
+                "osf://abc123/osfstorage/source.txt", "osf://abc123/osfstorage/dest.txt"
+            )
+
+            mock_cp.assert_called_once()
+            mock_rm.assert_called_once()
+
+    @patch("dvc_osf.filesystem.OSFAPIClient")
+    def test_mv_copy_fails(self, mock_client_class):
+        """Test mv raises exception if copy fails."""
+        fs = OSFFileSystem(token="test_token")
+
+        with patch.object(fs, "exists") as mock_exists, patch.object(
+            fs, "cp"
+        ) as mock_cp, patch.object(fs, "rm") as mock_rm:
+            mock_exists.return_value = False
+            mock_cp.side_effect = OSFNotFoundError("Copy failed")
+
+            with pytest.raises(OSFNotFoundError, match="Copy failed"):
+                fs.mv(
+                    "osf://abc123/osfstorage/source.txt",
+                    "osf://abc123/osfstorage/dest.txt",
+                )
+
+            mock_cp.assert_called_once()
+            # rm should not be called if copy fails
+            mock_rm.assert_not_called()
+
+    @patch("dvc_osf.filesystem.OSFAPIClient")
+    def test_mv_recursive_directory(self, mock_client_class):
+        """Test moving directory recursively."""
+        fs = OSFFileSystem(token="test_token")
+
+        with patch.object(fs, "exists") as mock_exists, patch.object(
+            fs, "cp"
+        ) as mock_cp, patch.object(fs, "rm") as mock_rm:
+            mock_exists.side_effect = [False, True]
+
+            fs.mv(
+                "osf://abc123/osfstorage/dir",
+                "osf://abc123/osfstorage/newdir",
+                recursive=True,
+            )
+
+            # Should pass recursive=True to cp
+            mock_cp.assert_called_once()
+            call_args = mock_cp.call_args
+            assert call_args[1].get("recursive") is True
+
+
+class TestBatchOperations:
+    """Tests for batch operation methods."""
+
+    @patch("dvc_osf.filesystem.OSFAPIClient")
+    def test_batch_copy(self, mock_client_class):
+        """Test batch copy with multiple files."""
+        fs = OSFFileSystem(token="test_token")
+
+        with patch.object(fs, "cp") as mock_cp:
+            pairs = [
+                ("osf://abc/file1.txt", "osf://abc/dest1.txt"),
+                ("osf://abc/file2.txt", "osf://abc/dest2.txt"),
+            ]
+
+            result = fs.batch_copy(pairs)
+
+            assert result["total"] == 2
+            assert result["success"] == 2
+            assert result["failed"] == 0
+            assert len(result["errors"]) == 0
+            assert mock_cp.call_count == 2
+
+    @patch("dvc_osf.filesystem.OSFAPIClient")
+    def test_batch_copy_partial_failure(self, mock_client_class):
+        """Test batch copy with some failures."""
+        fs = OSFFileSystem(token="test_token")
+
+        with patch.object(fs, "cp") as mock_cp:
+            mock_cp.side_effect = [
+                None,  # First succeeds
+                OSFNotFoundError("File not found"),  # Second fails
+                None,  # Third succeeds
+            ]
+
+            pairs = [
+                ("osf://abc/file1.txt", "osf://abc/dest1.txt"),
+                ("osf://abc/file2.txt", "osf://abc/dest2.txt"),
+                ("osf://abc/file3.txt", "osf://abc/dest3.txt"),
+            ]
+
+            result = fs.batch_copy(pairs)
+
+            assert result["total"] == 3
+            assert result["success"] == 2
+            assert result["failed"] == 1
+            assert len(result["errors"]) == 1
+            assert result["errors"][0][0] == "osf://abc/file2.txt"
+
+    @patch("dvc_osf.filesystem.OSFAPIClient")
+    def test_batch_move(self, mock_client_class):
+        """Test batch move with multiple files."""
+        fs = OSFFileSystem(token="test_token")
+
+        with patch.object(fs, "mv") as mock_mv:
+            pairs = [
+                ("osf://abc/file1.txt", "osf://abc/new1.txt"),
+                ("osf://abc/file2.txt", "osf://abc/new2.txt"),
+            ]
+
+            result = fs.batch_move(pairs)
+
+            assert result["total"] == 2
+            assert result["success"] == 2
+            assert result["failed"] == 0
+            assert mock_mv.call_count == 2
+
+    @patch("dvc_osf.filesystem.OSFAPIClient")
+    def test_batch_delete(self, mock_client_class):
+        """Test batch delete with multiple files."""
+        fs = OSFFileSystem(token="test_token")
+
+        with patch.object(fs, "rm_file") as mock_rm:
+            paths = [
+                "osf://abc/file1.txt",
+                "osf://abc/file2.txt",
+            ]
+
+            result = fs.batch_delete(paths)
+
+            assert result["total"] == 2
+            assert result["success"] == 2
+            assert result["failed"] == 0
+            assert mock_rm.call_count == 2
+
+    @patch("dvc_osf.filesystem.OSFAPIClient")
+    def test_batch_operations_empty_list(self, mock_client_class):
+        """Test batch operations raise ValueError for empty lists."""
+        fs = OSFFileSystem(token="test_token")
+
+        with pytest.raises(ValueError, match="cannot be empty"):
+            fs.batch_copy([])
+
+        with pytest.raises(ValueError, match="cannot be empty"):
+            fs.batch_move([])
+
+        with pytest.raises(ValueError, match="cannot be empty"):
+            fs.batch_delete([])
+
+    @patch("dvc_osf.filesystem.OSFAPIClient")
+    def test_batch_operations_duplicate_destinations(self, mock_client_class):
+        """Test batch operations raise ValueError for duplicate destinations."""
+        fs = OSFFileSystem(token="test_token")
+
+        pairs = [
+            ("osf://abc/file1.txt", "osf://abc/dest.txt"),
+            ("osf://abc/file2.txt", "osf://abc/dest.txt"),  # Duplicate destination
+        ]
+
+        with pytest.raises(ValueError, match="Duplicate destinations"):
+            fs.batch_copy(pairs)
+
+        with pytest.raises(ValueError, match="Duplicate destinations"):
+            fs.batch_move(pairs)
+
+    @patch("dvc_osf.filesystem.OSFAPIClient")
+    def test_progress_callback(self, mock_client_class):
+        """Test progress callback is invoked correctly."""
+        fs = OSFFileSystem(token="test_token")
+
+        callback_calls = []
+
+        def callback(index, total, path, operation):
+            callback_calls.append((index, total, path, operation))
+
+        with patch.object(fs, "cp"):
+            pairs = [
+                ("osf://abc/file1.txt", "osf://abc/dest1.txt"),
+                ("osf://abc/file2.txt", "osf://abc/dest2.txt"),
+            ]
+
+            fs.batch_copy(pairs, callback=callback)
+
+            assert len(callback_calls) == 2
+            assert callback_calls[0] == (1, 2, "osf://abc/file1.txt", "copy")
+            assert callback_calls[1] == (2, 2, "osf://abc/file2.txt", "copy")

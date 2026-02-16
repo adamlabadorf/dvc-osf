@@ -3,11 +3,13 @@
 from dvc_osf.exceptions import (
     OSFAPIError,
     OSFAuthenticationError,
+    OSFConflictError,
     OSFConnectionError,
     OSFException,
     OSFFileLockedError,
     OSFIntegrityError,
     OSFNotFoundError,
+    OSFOperationNotSupportedError,
     OSFPermissionError,
     OSFQuotaExceededError,
     OSFRateLimitError,
@@ -344,4 +346,71 @@ class TestOSFVersionConflictError:
     def test_not_retryable(self):
         """Test that version conflict errors are not retryable."""
         exc = OSFVersionConflictError()
+        assert exc.retryable is False
+
+
+class TestOSFConflictError:
+    """Tests for OSFConflictError."""
+
+    def test_inheritance(self):
+        """Test multiple inheritance from OSFException and FileExistsError."""
+        exc = OSFConflictError()
+        assert isinstance(exc, OSFException)
+        assert isinstance(exc, FileExistsError)
+
+    def test_default_message(self):
+        """Test default error message."""
+        exc = OSFConflictError()
+        assert "exists" in exc.message.lower()
+
+    def test_custom_message(self):
+        """Test custom error message."""
+        exc = OSFConflictError("Cannot copy: /data.csv already exists")
+        assert exc.message == "Cannot copy: /data.csv already exists"
+
+    def test_status_code(self):
+        """Test status_code attribute."""
+        exc = OSFConflictError(status_code=409)
+        assert exc.status_code == 409
+
+    def test_response(self):
+        """Test response attribute."""
+        mock_response = {"error": "file exists"}
+        exc = OSFConflictError(response=mock_response)
+        assert exc.response == mock_response
+
+    def test_not_retryable(self):
+        """Test that conflict errors are not retryable."""
+        exc = OSFConflictError()
+        assert exc.retryable is False
+
+
+class TestOSFOperationNotSupportedError:
+    """Tests for OSFOperationNotSupportedError."""
+
+    def test_inheritance(self):
+        """Test inheritance from OSFException."""
+        exc = OSFOperationNotSupportedError()
+        assert isinstance(exc, OSFException)
+
+    def test_default_message(self):
+        """Test default error message."""
+        exc = OSFOperationNotSupportedError()
+        assert "not supported" in exc.message.lower()
+
+    def test_custom_message(self):
+        """Test custom error message."""
+        exc = OSFOperationNotSupportedError("Cross-project copy not supported")
+        assert exc.message == "Cross-project copy not supported"
+
+    def test_operation_attribute(self):
+        """Test operation attribute."""
+        exc = OSFOperationNotSupportedError(
+            "Cross-project copy not supported", operation="copy"
+        )
+        assert exc.operation == "copy"
+
+    def test_not_retryable(self):
+        """Test that operation not supported errors are not retryable."""
+        exc = OSFOperationNotSupportedError()
         assert exc.retryable is False
