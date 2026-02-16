@@ -43,7 +43,7 @@ This plugin bridges the gap between DVC's powerful data versioning capabilities 
 
 ## Features
 
-- **Full DVC remote storage support for OSF** (Phase 3 - current implementation)
+- **Full DVC remote storage support for OSF** (Phase 4 - current implementation)
 - ✅ **Read Operations**:
   - Download versioned data from OSF storage
   - List and query files on OSF storage
@@ -54,6 +54,12 @@ This plugin bridges the gap between DVC's powerful data versioning capabilities 
   - Automatic file versioning on overwrites
   - Streaming uploads for large files with progress tracking
   - MD5 checksum verification for data integrity
+- ✅ **File Manipulation Operations** (Phase 4 - NEW):
+  - Copy files and directories within OSF storage
+  - Move/rename files and directories
+  - Batch copy, move, and delete operations
+  - Checksum verification during copy operations
+  - Progress callbacks for batch operations
 - Authentication via OSF personal access tokens
 - Support for OSF projects and components
 - Automatic retry logic with exponential backoff for network resilience
@@ -62,8 +68,9 @@ This plugin bridges the gap between DVC's powerful data versioning capabilities 
 ### Current Limitations
 
 - ❌ OSF add-on storage providers (osfstorage only)
-- ❌ Subdirectory uploads (root-level uploads fully supported)
+- ❌ Cross-project or cross-provider file operations
 - ❌ Append operations (not supported by OSF API)
+- ⚠️ Directory operations limited by OSF API (nested directory creation not supported)
 
 ## Installation
 
@@ -201,6 +208,80 @@ fs.put_file(
 )
 ```
 
+### File Manipulation Operations (Phase 4 - NEW)
+
+The plugin now supports copy, move, and delete operations directly on OSF storage:
+
+#### Copy Files
+
+```python
+from dvc_osf.filesystem import OSFFileSystem
+
+fs = OSFFileSystem("osf://abc123/osfstorage", token="your_token")
+
+# Copy a single file
+fs.cp("source_file.csv", "backup/source_file.csv")
+
+# Copy with overwrite control
+fs.cp("file.csv", "existing_file.csv", overwrite=False)  # Raises error if exists
+
+# Copy a directory recursively
+fs.cp("data_folder", "backup/data_folder", recursive=True)
+```
+
+#### Move/Rename Files
+
+```python
+# Move a file to a different location
+fs.mv("old_location/file.csv", "new_location/file.csv")
+
+# Rename a file
+fs.mv("old_name.csv", "new_name.csv")
+
+# Move a directory recursively
+fs.mv("old_folder", "new_folder", recursive=True)
+```
+
+#### Batch Operations
+
+For efficient bulk operations:
+
+```python
+# Batch copy multiple files
+copy_pairs = [
+    ("data1.csv", "backup/data1.csv"),
+    ("data2.csv", "backup/data2.csv"),
+    ("data3.csv", "backup/data3.csv"),
+]
+
+result = fs.batch_copy(copy_pairs)
+print(f"Copied {result['successful']} files, {result['failed']} failed")
+
+# Batch move with progress callback
+def progress(current, total, path, operation):
+    print(f"{operation}: {current}/{total} - {path}")
+
+move_pairs = [
+    ("temp1.csv", "archive/temp1.csv"),
+    ("temp2.csv", "archive/temp2.csv"),
+]
+
+result = fs.batch_move(move_pairs, callback=progress)
+
+# Batch delete files
+files_to_delete = ["temp1.csv", "temp2.csv", "temp3.csv"]
+result = fs.batch_delete(files_to_delete)
+print(f"Deleted {result['successful']} files")
+```
+
+#### Important Notes on File Operations
+
+- **Same project only**: Copy and move operations only work within the same OSF project and storage provider
+- **Checksum verification**: Copy operations automatically verify data integrity using checksums
+- **Non-atomic moves**: Move operations use copy-then-delete strategy for reliability (not atomic)
+- **Batch error handling**: Batch operations collect all errors and continue processing remaining files
+- **No overwrite by default**: Copy operations overwrite by default; use `overwrite=False` to prevent
+
 ## Configuration Options
 
 Environment variables for customizing OSF client behavior:
@@ -321,6 +402,47 @@ export OSF_WRITE_BUFFER_SIZE=16384
 - Wait for the other operation to complete
 - Check OSF web interface to see if file is being processed
 - This is usually temporary - retry after a few moments
+
+### Copy/Move Operation Errors (Phase 4)
+
+**Problem:** "Cross-project copy not supported" or "Cross-provider copy not supported"
+
+**Solutions:**
+- Copy and move operations only work within the same OSF project
+- Ensure both source and destination paths use the same project ID
+- Both paths must use the same storage provider (e.g., both `osfstorage`)
+- To move files between projects, download and re-upload manually
+
+**Problem:** "Destination exists" during copy/move operations
+
+**Solutions:**
+- For copy: Use `overwrite=True` parameter: `fs.cp(src, dst, overwrite=True)`
+- For move: Delete the destination file first, or choose a different destination
+- Check if destination exists before operation: `if not fs.exists(dst): fs.cp(src, dst)`
+
+**Problem:** Batch operations report partial failures
+
+**Solutions:**
+- Check the `errors` list in the result dictionary for specific failure reasons
+- Batch operations continue on errors - review the result to see which files succeeded
+- Common causes: source file not found, permission denied, network errors
+- Retry failed operations individually for more detailed error messages
+
+**Problem:** "Source not found" during copy/move
+
+**Solutions:**
+- Verify the source file exists: `fs.exists("path/to/file")`
+- Check for typos in the file path
+- Ensure you have read permissions for the source file
+- List directory contents to confirm file name: `fs.ls("directory")`
+
+**Problem:** Copy operation succeeds but checksums don't match
+
+**Solutions:**
+- The operation will automatically fail with an integrity error
+- This indicates data corruption during transfer
+- Retry the operation - transient network issues often resolve
+- Check network stability if the problem persists
 
 ## Architecture
 
@@ -457,13 +579,25 @@ If you use dvc-osf in your research, please cite:
 
 ## Roadmap
 
-### Phase 4 (Future)
-- [ ] Subdirectory upload support (explicit folder creation)
-- [ ] Support for OSF add-on storage providers
-- [ ] Batch upload/download optimizations
-- [ ] Integration with OSF DOI minting
+### Completed Phases
+
+- ✅ **Phase 1**: Basic read operations and authentication
+- ✅ **Phase 2**: Advanced read features (streaming, caching, error handling)
+- ✅ **Phase 3**: Write operations (upload, delete, checksums)
+- ✅ **Phase 4**: File manipulation operations (copy, move, batch operations)
+
+### Future Phases
+
+### Phase 5 (In Progress)
 - [ ] Parallel upload/download for multiple files
 - [ ] Resume interrupted uploads
+- [ ] Performance optimizations for batch operations
+
+### Phase 6 (Planned)
+- [ ] Subdirectory management (explicit folder creation)
+- [ ] Support for OSF add-on storage providers
+- [ ] Integration with OSF DOI minting
+- [ ] Advanced metadata handling
 
 ## FAQ
 
@@ -487,6 +621,18 @@ A: OSF automatically creates a new version of the file. The plugin doesn't delet
 
 **Q: Does this support OSF add-on storage providers (like Dropbox, Google Drive)?**  
 A: Not currently. The plugin supports `osfstorage` only. Add-on provider support is planned for future releases.
+
+**Q: Can I copy or move files between different OSF projects?**  
+A: No, copy and move operations only work within the same OSF project and storage provider. To transfer files between projects, download from one project and upload to another.
+
+**Q: Are move operations atomic on OSF?**  
+A: No, move operations use a copy-then-delete strategy for reliability. If the delete fails after a successful copy, the source file may remain (creating a duplicate). This prioritizes data safety over atomicity.
+
+**Q: How do I copy multiple files efficiently?**  
+A: Use the `batch_copy()` method which handles multiple files in one operation and provides detailed results. Batch operations are more efficient than individual copy operations and provide progress tracking.
+
+**Q: What happens if a file copy fails in the middle?**  
+A: The plugin verifies checksums after each copy. If data corruption is detected, the operation fails with an integrity error, and you can safely retry. The destination file will not be left in a corrupted state.
 
 ---
 
