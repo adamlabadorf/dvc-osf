@@ -4,6 +4,7 @@ import hashlib
 import io
 import logging
 import os
+import tempfile
 from typing import Any, BinaryIO, Callable, Dict, List, Optional, Union
 
 import requests
@@ -12,7 +13,12 @@ from dvc_objects.fs.base import ObjectFileSystem
 from .api import OSFAPIClient
 from .auth import get_token
 from .config import Config
-from .exceptions import OSFIntegrityError, OSFNotFoundError
+from .exceptions import (
+    OSFIntegrityError,
+    OSFNotFoundError,
+    OSFConflictError,
+    OSFOperationNotSupportedError,
+)
 from .utils import (
     compute_upload_checksum,
     determine_upload_strategy,
@@ -942,6 +948,449 @@ class OSFFileSystem(ObjectFileSystem):
 
         # Upload
         self.client.upload_file(upload_url, file_obj, callback, file_size)
+
+    def cp(
+        self,
+        path1: str,
+        path2: str,
+        recursive: bool = False,
+        overwrite: bool = True,
+        **kwargs: Any,
+    ) -> None:
+        """
+        Copy a file or directory within OSF storage.
+
+        Uses download-then-upload strategy for reliability. Verifies checksums
+        to ensure data integrity.
+
+        Args:
+            path1: Source path
+            path2: Destination path
+            recursive: If True, copy directories recursively
+            overwrite: If True, overwrite existing destination (default: True)
+            **kwargs: Additional arguments
+
+        Raises:
+            OSFNotFoundError: If source doesn't exist
+            OSFConflictError: If destination exists and overwrite=False
+            OSFOperationNotSupportedError: For cross-project or cross-provider copies
+            OSFIntegrityError: If checksum verification fails
+
+        Example:
+            >>> fs.cp("osf://abc123/data.csv", "osf://abc123/backup/data.csv")
+        """
+        logger.info(f"Copying {path1} to {path2}")
+
+        # Resolve and validate paths
+        src_project, src_provider, src_path = self._resolve_path(path1)
+        dst_project, dst_provider, dst_path = self._resolve_path(path2)
+
+        # Validate same project and provider
+        if src_project != dst_project:
+            raise OSFOperationNotSupportedError(
+                f"Cross-project copy not supported: {src_project} -> {dst_project}",
+                operation="copy",
+            )
+        if src_provider != dst_provider:
+            raise OSFOperationNotSupportedError(
+                f"Cross-provider copy not supported: {src_provider} -> {dst_provider}",
+                operation="copy",
+            )
+
+        # Get source info
+        try:
+            src_info = self.info(path1)
+        except OSFNotFoundError:
+            raise OSFNotFoundError(f"Source not found: {path1}")
+
+        # Handle directory copy
+        if src_info["type"] == "directory":
+            if not recursive:
+                raise OSFOperationNotSupportedError(
+                    f"Cannot copy directory without recursive=True: {path1}",
+                    operation="copy",
+                )
+
+            # List source directory contents
+            items = self.ls(path1, detail=True)
+            logger.debug(f"Recursively copying {len(items)} items from {path1}")
+
+            for item in items:
+                item_name = item["name"]
+                # Build destination path
+                rel_path = item_name[
+                    len(serialize_path(src_project, src_provider, src_path)) :
+                ]
+                if rel_path.startswith("/"):
+                    rel_path = rel_path[1:]
+                dest_item = serialize_path(dst_project, dst_provider, dst_path)
+                if rel_path:
+                    dest_item = f"{dest_item}/{rel_path}"
+
+                # Recursively copy
+                self.cp(item_name, dest_item, recursive=True, overwrite=overwrite)
+
+            logger.info(f"Completed recursive copy of {path1} to {path2}")
+            return
+
+        # Single file copy
+        # Check destination
+        if not overwrite and self.exists(path2):
+            raise OSFConflictError(f"Destination exists: {path2}")
+
+        # Create temp file for download
+        temp_fd, temp_path = tempfile.mkstemp(prefix="dvc_osf_copy_")
+        try:
+            # Close the file descriptor as we'll open it properly
+            os.close(temp_fd)
+
+            # Download source to temp file
+            logger.debug(f"Downloading {path1} to temp file")
+            self.get_file(path1, temp_path)
+
+            # Upload temp file to destination
+            logger.debug(f"Uploading temp file to {path2}")
+            self.put_file(temp_path, path2)
+
+            # Verify checksums match
+            src_checksum = src_info.get("checksum")
+            if src_checksum:
+                dst_info = self.info(path2)
+                dst_checksum = dst_info.get("checksum")
+                if dst_checksum and src_checksum != dst_checksum:
+                    raise OSFIntegrityError(
+                        f"Checksum mismatch after copy: {path1} -> {path2}",
+                        expected_checksum=src_checksum,
+                        actual_checksum=dst_checksum,
+                    )
+
+            logger.info(f"Successfully copied {path1} to {path2}")
+
+        finally:
+            # Clean up temp file
+            try:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+                    logger.debug(f"Cleaned up temp file: {temp_path}")
+            except Exception as e:
+                logger.warning(f"Failed to clean up temp file {temp_path}: {e}")
+
+    def mv(
+        self,
+        path1: str,
+        path2: str,
+        recursive: bool = False,
+        **kwargs: Any,
+    ) -> None:
+        """
+        Move or rename a file or directory within OSF storage.
+
+        Implements move as copy-then-delete for reliability. Not fully atomic,
+        but prioritizes data safety (file may be duplicated if delete fails,
+        but will not be lost).
+
+        Args:
+            path1: Source path
+            path2: Destination path
+            recursive: If True, move directories recursively
+            **kwargs: Additional arguments
+
+        Raises:
+            OSFNotFoundError: If source doesn't exist
+            OSFConflictError: If destination already exists
+            OSFOperationNotSupportedError: For cross-project or cross-provider moves
+
+        Note:
+            Move is not atomic. If the delete operation fails after a successful
+            copy, a warning will be logged but no exception will be raised,
+            leaving the source file in place (orphaned copy).
+
+        Example:
+            >>> fs.mv("osf://abc123/old.csv", "osf://abc123/new.csv")
+        """
+        logger.info(f"Moving {path1} to {path2}")
+
+        # Resolve and validate paths
+        src_project, src_provider, src_path = self._resolve_path(path1)
+        dst_project, dst_provider, dst_path = self._resolve_path(path2)
+
+        # Validate same project and provider
+        if src_project != dst_project:
+            raise OSFOperationNotSupportedError(
+                f"Cross-project move not supported: {src_project} -> {dst_project}",
+                operation="move",
+            )
+        if src_provider != dst_provider:
+            raise OSFOperationNotSupportedError(
+                f"Cross-provider move not supported: {src_provider} -> {dst_provider}",
+                operation="move",
+            )
+
+        # Check if destination exists
+        if self.exists(path2):
+            raise OSFConflictError(f"Destination exists: {path2}")
+
+        # Copy source to destination
+        try:
+            self.cp(path1, path2, recursive=recursive, overwrite=False)
+        except Exception as e:
+            logger.error(f"Copy failed during move operation: {e}")
+            raise
+
+        # Verify copy succeeded
+        if not self.exists(path2):
+            raise OSFIntegrityError(
+                f"Move failed: destination not found after copy: {path2}"
+            )
+
+        # Delete source
+        # If delete fails, log warning but don't raise exception
+        # (copy succeeded, so file is safely at destination)
+        try:
+            self.rm(path1, recursive=recursive)
+            logger.info(f"Successfully moved {path1} to {path2}")
+        except Exception as e:
+            logger.warning(
+                f"Move completed but source deletion failed: {path1}. "
+                f"File successfully copied to {path2} but source remains. "
+                f"Error: {e}"
+            )
+
+    def batch_copy(
+        self,
+        path_pairs: List[tuple[str, str]],
+        overwrite: bool = True,
+        callback: Optional[Callable[[int, int, str, str], None]] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """
+        Copy multiple files in batch.
+
+        Collects errors without failing early, allowing partial success.
+
+        Args:
+            path_pairs: List of (source, destination) path tuples
+            overwrite: If True, overwrite existing destinations
+            callback: Optional progress callback (index, total, path, operation)
+            **kwargs: Additional arguments
+
+        Returns:
+            Summary dictionary with keys:
+                - total: Total number of operations
+                - success: Number of successful copies
+                - failed: Number of failed copies
+                - errors: List of (source, dest, error) tuples
+
+        Raises:
+            ValueError: If path_pairs is empty or contains duplicate destinations
+
+        Example:
+            >>> result = fs.batch_copy([
+            ...     ("osf://abc/a.txt", "osf://abc/backup/a.txt"),
+            ...     ("osf://abc/b.txt", "osf://abc/backup/b.txt"),
+            ... ])
+            >>> print(f"Copied {result['success']}/{result['total']} files")
+        """
+        # Validate input
+        if not path_pairs:
+            raise ValueError("path_pairs cannot be empty")
+
+        # Check for duplicate destinations
+        destinations = [dst for _, dst in path_pairs]
+        if len(destinations) != len(set(destinations)):
+            raise ValueError("Duplicate destinations not allowed")
+
+        logger.info(f"Starting batch copy of {len(path_pairs)} files")
+
+        total = len(path_pairs)
+        success = 0
+        failed = 0
+        errors = []
+
+        for i, (src, dst) in enumerate(path_pairs):
+            try:
+                self.cp(src, dst, overwrite=overwrite)
+                success += 1
+                logger.debug(f"Batch copy [{i + 1}/{total}]: {src} -> {dst} SUCCESS")
+            except Exception as e:
+                failed += 1
+                errors.append((src, dst, str(e)))
+                logger.warning(
+                    f"Batch copy [{i + 1}/{total}]: {src} -> {dst} FAILED: {e}"
+                )
+
+            # Invoke callback if provided
+            if callback:
+                try:
+                    callback(i + 1, total, src, "copy")
+                except Exception as e:
+                    logger.warning(f"Progress callback failed: {e}")
+
+        result = {
+            "total": total,
+            "success": success,
+            "failed": failed,
+            "errors": errors,
+        }
+
+        logger.info(
+            f"Batch copy completed: {success} succeeded, {failed} failed out of {total}"
+        )
+
+        return result
+
+    def batch_move(
+        self,
+        path_pairs: List[tuple[str, str]],
+        callback: Optional[Callable[[int, int, str, str], None]] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """
+        Move multiple files in batch.
+
+        Collects errors without failing early, allowing partial success.
+
+        Args:
+            path_pairs: List of (source, destination) path tuples
+            callback: Optional progress callback (index, total, path, operation)
+            **kwargs: Additional arguments
+
+        Returns:
+            Summary dictionary with keys:
+                - total: Total number of operations
+                - success: Number of successful moves
+                - failed: Number of failed moves
+                - errors: List of (source, dest, error) tuples
+
+        Raises:
+            ValueError: If path_pairs is empty or contains duplicate destinations
+
+        Example:
+            >>> result = fs.batch_move([
+            ...     ("osf://abc/old1.txt", "osf://abc/new1.txt"),
+            ...     ("osf://abc/old2.txt", "osf://abc/new2.txt"),
+            ... ])
+        """
+        # Validate input
+        if not path_pairs:
+            raise ValueError("path_pairs cannot be empty")
+
+        # Check for duplicate destinations
+        destinations = [dst for _, dst in path_pairs]
+        if len(destinations) != len(set(destinations)):
+            raise ValueError("Duplicate destinations not allowed")
+
+        logger.info(f"Starting batch move of {len(path_pairs)} files")
+
+        total = len(path_pairs)
+        success = 0
+        failed = 0
+        errors = []
+
+        for i, (src, dst) in enumerate(path_pairs):
+            try:
+                self.mv(src, dst)
+                success += 1
+                logger.debug(f"Batch move [{i + 1}/{total}]: {src} -> {dst} SUCCESS")
+            except Exception as e:
+                failed += 1
+                errors.append((src, dst, str(e)))
+                logger.warning(
+                    f"Batch move [{i + 1}/{total}]: {src} -> {dst} FAILED: {e}"
+                )
+
+            # Invoke callback if provided
+            if callback:
+                try:
+                    callback(i + 1, total, src, "move")
+                except Exception as e:
+                    logger.warning(f"Progress callback failed: {e}")
+
+        result = {
+            "total": total,
+            "success": success,
+            "failed": failed,
+            "errors": errors,
+        }
+
+        logger.info(
+            f"Batch move completed: {success} succeeded, {failed} failed out of {total}"
+        )
+
+        return result
+
+    def batch_delete(
+        self,
+        paths: List[str],
+        callback: Optional[Callable[[int, int, str, str], None]] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """
+        Delete multiple files in batch.
+
+        Collects errors without failing early, allowing partial success.
+
+        Args:
+            paths: List of file paths to delete
+            callback: Optional progress callback (index, total, path, operation)
+            **kwargs: Additional arguments
+
+        Returns:
+            Summary dictionary with keys:
+                - total: Total number of operations
+                - success: Number of successful deletes
+                - failed: Number of failed deletes
+                - errors: List of (path, error) tuples
+
+        Raises:
+            ValueError: If paths is empty
+
+        Example:
+            >>> result = fs.batch_delete([
+            ...     "osf://abc/temp1.txt",
+            ...     "osf://abc/temp2.txt",
+            ... ])
+        """
+        # Validate input
+        if not paths:
+            raise ValueError("paths cannot be empty")
+
+        logger.info(f"Starting batch delete of {len(paths)} files")
+
+        total = len(paths)
+        success = 0
+        failed = 0
+        errors = []
+
+        for i, path in enumerate(paths):
+            try:
+                self.rm_file(path)
+                success += 1
+                logger.debug(f"Batch delete [{i + 1}/{total}]: {path} SUCCESS")
+            except Exception as e:
+                failed += 1
+                errors.append((path, str(e)))
+                logger.warning(f"Batch delete [{i + 1}/{total}]: {path} FAILED: {e}")
+
+            # Invoke callback if provided
+            if callback:
+                try:
+                    callback(i + 1, total, path, "delete")
+                except Exception as e:
+                    logger.warning(f"Progress callback failed: {e}")
+
+        result = {
+            "total": total,
+            "success": success,
+            "failed": failed,
+            "errors": errors,
+        }
+
+        logger.info(
+            f"Batch delete completed: {success} succeeded, {failed} failed out of {total}"
+        )
+
+        return result
 
     def mkdir(self, path: str, create_parents: bool = True, **kwargs: Any) -> None:
         """

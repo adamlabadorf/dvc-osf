@@ -274,3 +274,57 @@ class OSFVersionConflictError(OSFException):
         self.response = response
         self.bytes_uploaded = bytes_uploaded
         self.total_size = total_size
+
+
+class OSFConflictError(OSFException, FileExistsError):
+    """Raised when destination file already exists during copy/move operations."""
+
+    retryable: bool = False
+
+    def __init__(
+        self,
+        message: str = "Destination file already exists.",
+        status_code: Optional[int] = None,
+        response: Optional[Any] = None,
+    ) -> None:
+        """
+        Initialize conflict error.
+
+        Args:
+            message: Error message
+            status_code: HTTP status code (if from API)
+            response: HTTP response object
+
+        Example:
+            >>> raise OSFConflictError("Cannot copy: /data.csv already exists")
+        """
+        super().__init__(message)
+        self.status_code = status_code
+        self.response = response
+
+
+class OSFOperationNotSupportedError(OSFException):
+    """Raised when an operation is not supported by OSF or this implementation."""
+
+    retryable: bool = False
+
+    def __init__(
+        self,
+        message: str = "Operation not supported.",
+        operation: Optional[str] = None,
+    ) -> None:
+        """
+        Initialize operation not supported error.
+
+        Args:
+            message: Error message
+            operation: Name of the unsupported operation
+
+        Example:
+            >>> raise OSFOperationNotSupportedError(
+            ...     "Cross-project copy not supported",
+            ...     operation="copy"
+            ... )
+        """
+        super().__init__(message)
+        self.operation = operation
