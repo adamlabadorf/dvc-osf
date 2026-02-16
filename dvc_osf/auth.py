@@ -38,10 +38,15 @@ def get_token(
         if token_from_config:
             return validate_token(token_from_config)
 
-    # Priority 3: Environment variable
+    # Priority 3: Environment variable (OSF_TOKEN)
     token_from_env = os.getenv("OSF_TOKEN")
     if token_from_env:
         return validate_token(token_from_env)
+
+    # Priority 4: Alternate environment variable (OSF_ACCESS_TOKEN)
+    token_from_alt_env = os.getenv("OSF_ACCESS_TOKEN")
+    if token_from_alt_env:
+        return validate_token(token_from_alt_env)
 
     # No token found in any source
     raise OSFAuthenticationError(

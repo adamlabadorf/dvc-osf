@@ -44,6 +44,12 @@ dev = [
     "mypy>=1.0.0",
     "pre-commit>=3.0.0",
 ]
+test = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-mock>=3.10.0",
+    "dvc>=3.0.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/dvc-osf/dvc-osf"
@@ -57,6 +63,9 @@ osf = "dvc_osf.filesystem:OSFFileSystem"
 [project.entry-points."dvc.fs"]
 osf = "dvc_osf.filesystem:OSFFileSystem"
 
+[project.entry-points."dvc.config"]
+osf = "dvc_osf:_register_with_dvc"
+
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
@@ -65,6 +74,9 @@ build-backend = "setuptools.build_meta"
 where = ["."]
 include = ["dvc_osf*"]
 exclude = ["tests*"]
+
+[tool.setuptools.data-files]
+"" = ["dvc_osf_register.pth"]
 
 [tool.setuptools.dynamic]
 version = {attr = "dvc_osf.__version__"}

@@ -376,11 +376,15 @@ class OSFFileSystem(ObjectFileSystem):
 
     protocol = "osf"
     REQUIRES = {"requests": "requests"}
+    PARAM_CHECKSUM = "md5"
 
     def __init__(
         self,
         *args: Any,
         token: Optional[str] = None,
+        project_id: Optional[str] = None,
+        provider: Optional[str] = None,
+        endpoint_url: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -391,6 +395,9 @@ class OSFFileSystem(ObjectFileSystem):
         Args:
             *args: Positional arguments (may include osf:// URL)
             token: OSF personal access token for authentication
+            project_id: OSF project ID (alternative to URL)
+            provider: OSF storage provider (default: osfstorage)
+            endpoint_url: Custom OSF API endpoint URL
             **kwargs: Additional arguments (may include fs_args, host, etc.)
         """
         super().__init__(*args, **kwargs)
@@ -407,19 +414,95 @@ class OSFFileSystem(ObjectFileSystem):
         if url:
             self.project_id, self.provider, self.base_path = parse_osf_url(url)
         else:
-            # No URL provided - will fail, but let's set defaults
-            self.project_id = ""
-            self.provider = Config.DEFAULT_PROVIDER
+            self.project_id = project_id or kwargs.get("project_id", "")
+            self.provider = provider or kwargs.get("provider", Config.DEFAULT_PROVIDER)
             self.base_path = ""
 
-        # Get authentication token
-        fs_args = kwargs.get("fs_args", {})
-        token_to_use = token or fs_args.get("token")
+        # Resolve credentials via _prepare_credentials flow
+        creds = self._prepare_credentials(
+            token=token,
+            endpoint_url=endpoint_url,
+            **{k: v for k, v in kwargs.items() if k in ("token", "endpoint_url")},
+        )
 
-        self.token = get_token(token=token_to_use, dvc_config=fs_args)
+        self.token = get_token(
+            token=creds.get("token"),
+            dvc_config=kwargs.get("fs_args", {}),
+        )
+
+        # Apply custom endpoint if provided
+        if creds.get("endpoint_url"):
+            Config.API_BASE_URL = creds["endpoint_url"]
 
         # Initialize API client
         self.client = OSFAPIClient(token=self.token)
+
+    def _prepare_credentials(self, **config: Any) -> Dict[str, Any]:
+        """
+        Prepare credentials for the OSF filesystem.
+
+        Resolves token from config kwargs, then environment variables.
+        Integrates with DVC's credential management flow.
+
+        Args:
+            **config: Configuration dict (may contain token, endpoint_url)
+
+        Returns:
+            Dict with resolved credentials (token, endpoint_url)
+        """
+        creds: Dict[str, Any] = {}
+
+        # Token resolution: explicit config > OSF_TOKEN env > OSF_ACCESS_TOKEN env
+        token = config.get("token")
+        if not token:
+            token = os.environ.get("OSF_TOKEN") or os.environ.get("OSF_ACCESS_TOKEN")
+        if token:
+            creds["token"] = token
+
+        # Endpoint URL
+        endpoint_url = config.get("endpoint_url")
+        if endpoint_url:
+            creds["endpoint_url"] = endpoint_url
+
+        return creds
+
+    @staticmethod
+    def _get_kwargs_from_urls(urlpath: str) -> Dict[str, Any]:
+        """
+        Parse an osf:// URL into constructor kwargs.
+
+        Used by DVC/fsspec to convert remote URLs into filesystem
+        constructor parameters.
+
+        Args:
+            urlpath: OSF URL (e.g., 'osf://abc123/osfstorage/data')
+
+        Returns:
+            Dict with project_id, provider, and optionally path
+        """
+        project_id, provider, path = parse_osf_url(urlpath)
+        result: Dict[str, Any] = {
+            "project_id": project_id,
+            "provider": provider,
+        }
+        # Only include path if non-empty
+        path = path.strip("/") if path else ""
+        if path:
+            result["path"] = path
+        return result
+
+    def unstrip_protocol(self, path: str) -> str:
+        """
+        Reconstruct a full osf:// URL from an internal path.
+
+        Args:
+            path: Internal path (without protocol)
+
+        Returns:
+            Full osf:// URL
+        """
+        path = path.strip("/") if path else ""
+        return serialize_path(self.project_id, self.provider, path)
 
     def _resolve_path(self, path: str) -> tuple[str, str, str]:
         """
