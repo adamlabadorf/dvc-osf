@@ -2,7 +2,7 @@
 name = "dvc-osf"
 description = "DVC plugin for Open Science Framework (OSF) remote storage"
 readme = "README.md"
-requires-python = ">=3.8.1"
+requires-python = ">=3.9"
 license = {text = "Apache-2.0"}
 authors = [
     {name = "DVC-OSF Contributors", email = "support@dvc.org"},
@@ -24,7 +24,6 @@ classifiers = [
 ]
 dynamic = ["version"]
 dependencies = [
-    "dvc-objects>=5.0.0",
     "requests>=2.28.0",
     "urllib3>=1.26.0",
     "fsspec>=2023.1.0",

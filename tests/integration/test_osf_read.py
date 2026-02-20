@@ -205,22 +205,20 @@ class TestOSFFileSystemIntegration:
 class TestOSFFileSystemEdgeCases:
     """Integration tests for edge cases and error handling."""
 
-    def test_write_mode_raises_not_implemented(self):
-        """Test that write mode raises NotImplementedError."""
+    def test_write_mode_works(self):
+        """Test that write mode (wb) is supported (Phase 3+)."""
         url = f"osf://{OSF_TEST_PROJECT_ID}/osfstorage"
         fs = OSFFileSystem(url, token=OSF_TEST_TOKEN)
-
-        with pytest.raises(
-            NotImplementedError, match="Write operations not yet supported"
-        ):
-            fs.open("test.txt", mode="wb")
+        # open() in wb mode should return a write handle, not raise
+        fh = fs.open("test_write_mode_check.txt", mode="wb")
+        assert fh is not None
 
     def test_append_mode_raises_not_implemented(self):
-        """Test that append mode raises NotImplementedError."""
+        """Test that append mode raises NotImplementedError (OSF does not support it)."""
         url = f"osf://{OSF_TEST_PROJECT_ID}/osfstorage"
         fs = OSFFileSystem(url, token=OSF_TEST_TOKEN)
 
         with pytest.raises(
-            NotImplementedError, match="Write operations not yet supported"
+            NotImplementedError, match="Append mode not supported"
         ):
             fs.open("test.txt", mode="ab")

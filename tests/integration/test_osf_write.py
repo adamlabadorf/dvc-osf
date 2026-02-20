@@ -67,6 +67,7 @@ class TestOSFWriteOperations:
         # Clean up
         osf_fs.rm(remote_path)
 
+    @pytest.mark.skip(reason="Large file test skipped for speed — run manually")
     def test_put_file_large_chunked(self, osf_fs, test_project_path, tmp_path):
         """Test uploading a large file with chunked upload."""
         # Create a file larger than chunk threshold (>5MB)

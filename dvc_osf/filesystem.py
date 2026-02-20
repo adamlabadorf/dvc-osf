@@ -378,6 +378,15 @@ class OSFFileSystem(ObjectFileSystem):
     REQUIRES = {"requests": "requests"}
     PARAM_CHECKSUM = "md5"
 
+    # DVC config schema for OSF remotes (discovered via entry points)
+    REMOTE_CONFIG = {
+        "url": str,  # osf://project_id/provider/path
+        "token": str,  # OSF personal access token
+        "project_id": str,  # OSF project ID (can also come from URL)
+        "provider": str,  # Storage provider (default: osfstorage)
+        "endpoint_url": str,  # Custom OSF API endpoint (default: https://api.osf.io/v2/)
+    }
+
     def __init__(
         self,
         *args: Any,
@@ -715,18 +724,22 @@ class OSFFileSystem(ObjectFileSystem):
         parent_path = get_directory(file_path)
         filename = get_filename(file_path)
 
-        # List parent directory
+        # List parent directory, following pagination
         parent_api_url = path_to_api_url(project_id, provider, parent_path)
-        response = self.client.get(parent_api_url)
-        data = response.json()
+        next_url = parent_api_url
+        while next_url:
+            response = self.client.get(next_url)
+            data = response.json()
 
-        # Search for file in listing
-        if "data" in data:
-            items = data["data"]
-            for item in items:
-                item_name = item.get("attributes", {}).get("name", "")
-                if item_name == filename:
-                    return self._parse_metadata(project_id, provider, parent_path, item)
+            if "data" in data:
+                for item in data["data"]:
+                    item_name = item.get("attributes", {}).get("name", "")
+                    if item_name == filename:
+                        return self._parse_metadata(
+                            project_id, provider, parent_path, item
+                        )
+
+            next_url = data.get("links", {}).get("next")
 
         # File not found
         raise OSFNotFoundError(f"File not found: {path}")
@@ -939,27 +952,36 @@ class OSFFileSystem(ObjectFileSystem):
             self.client.upload_file(upload_url, f, callback, file_size)
 
     def _get_upload_url(self, project_id: str, provider: str, file_path: str) -> str:
-        """Get upload URL for a file (existing or new)."""
+        """Get upload URL for a file (existing or new).
+
+        Follows OSF API pagination to ensure all files in the parent directory
+        are checked before falling back to the creation URL.
+        """
         parent_path = get_directory(file_path)
         filename = get_filename(file_path)
 
-        # List parent directory to check if file exists
+        # List parent directory to check if file exists, following pagination
         parent_api_url = path_to_api_url(project_id, provider, parent_path)
+        next_url = parent_api_url
         try:
-            response = self.client.get(parent_api_url)
-            data = response.json()
+            while next_url:
+                response = self.client.get(next_url)
+                data = response.json()
 
-            # Check if file exists
-            if "data" in data:
-                items = data["data"]
-                for item in items:
-                    item_name = item.get("attributes", {}).get("name", "")
-                    if item_name == filename:
-                        # File exists, return its upload URL from links
-                        links = item.get("links", {})
-                        upload_url = links.get("upload")
-                        if upload_url:
-                            return upload_url
+                # Check if file exists on this page
+                if "data" in data:
+                    for item in data["data"]:
+                        item_name = item.get("attributes", {}).get("name", "")
+                        if item_name == filename:
+                            # File exists — return its update URL from links
+                            links = item.get("links", {})
+                            upload_url = links.get("upload")
+                            if upload_url:
+                                return upload_url
+
+                # Follow next page if available
+                next_url = data.get("links", {}).get("next")
+
         except OSFNotFoundError:
             # Parent directory doesn't exist - that's okay for new files
             # OSF will create directories implicitly when we upload
@@ -1521,22 +1543,25 @@ class OSFFileSystem(ObjectFileSystem):
         parent_path = get_directory(file_path)
         filename = get_filename(file_path)
 
-        # Get file's delete URL
+        # Get file's delete URL, following pagination
         parent_api_url = path_to_api_url(project_id, provider, parent_path)
-        response = self.client.get(parent_api_url)
-        data = response.json()
+        next_url = parent_api_url
+        while next_url:
+            response = self.client.get(next_url)
+            data = response.json()
 
-        if "data" in data:
-            items = data["data"]
-            for item in items:
-                item_name = item.get("attributes", {}).get("name", "")
-                if item_name == filename:
-                    # Found file, get delete URL
-                    links = item.get("links", {})
-                    delete_url = links.get("delete") or links.get("upload")
-                    if delete_url:
-                        self.client.delete(delete_url)
-                    return
+            if "data" in data:
+                for item in data["data"]:
+                    item_name = item.get("attributes", {}).get("name", "")
+                    if item_name == filename:
+                        # Found file, get delete URL
+                        links = item.get("links", {})
+                        delete_url = links.get("delete") or links.get("upload")
+                        if delete_url:
+                            self.client.delete(delete_url)
+                        return
+
+            next_url = data.get("links", {}).get("next")
 
         raise OSFNotFoundError(f"File not found: {path}")
 

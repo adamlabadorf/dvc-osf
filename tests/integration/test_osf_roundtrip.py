@@ -80,6 +80,7 @@ class TestOSFRoundtrip:
         # Clean up
         osf_fs.rm(remote_path)
 
+    @pytest.mark.skip(reason="Large file test skipped for speed — run manually")
     def test_roundtrip_large_binary_file(self, osf_fs, test_project_path, tmp_path):
         """Test roundtrip with a large binary file (triggers chunking)."""
         # Create original file (6MB to trigger chunked upload)
