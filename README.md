@@ -82,31 +82,19 @@ Until that PR is merged into upstream DVC, install DVC directly from the
 patched fork:
 
 ```bash
-# Install DVC from the patched fork (required until upstream PR #10994 is merged)
-pip install "dvc @ git+https://github.com/adamlabadorf/dvc.git@feature/plugin-schema-discovery"
-
-# Then install dvc-osf
-pip install dvc-osf
-```
-
-Or in one command:
-
-```bash
+# Install both DVC fork and dvc-osf directly from GitHub
 pip install \
   "dvc @ git+https://github.com/adamlabadorf/dvc.git@feature/plugin-schema-discovery" \
-  dvc-osf
+  "dvc-osf @ git+https://github.com/adamlabadorf/dvc-osf.git"
 ```
 
 Once [PR #10994](https://github.com/treeverse/dvc/pull/10994) is merged and
-released, a standard `pip install dvc dvc-osf` will work without the fork.
-
-### Standard Installation (post-merge)
+released on PyPI, installation simplifies to:
 
 ```bash
-pip install dvc-osf
+# Standard installation (post-merge)
+pip install dvc dvc-osf
 ```
-
-DVC is installed automatically as a dependency.
 
 ### Install from source
 
