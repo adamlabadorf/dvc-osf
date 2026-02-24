@@ -74,16 +74,44 @@ This plugin bridges the gap between DVC's powerful data versioning capabilities 
 
 ## Installation
 
-You can install **dvc-osf** via pip:
+### ⚠️ DVC Compatibility Note
+
+`dvc-osf` requires a small change to DVC core to register its config schema
+(see [treeverse/dvc#10994](https://github.com/treeverse/dvc/pull/10994)).
+Until that PR is merged into upstream DVC, install DVC directly from the
+patched fork:
+
+```bash
+# Install DVC from the patched fork (required until upstream PR #10994 is merged)
+pip install "dvc @ git+https://github.com/adamlabadorf/dvc.git@feature/plugin-schema-discovery"
+
+# Then install dvc-osf
+pip install dvc-osf
+```
+
+Or in one command:
+
+```bash
+pip install \
+  "dvc @ git+https://github.com/adamlabadorf/dvc.git@feature/plugin-schema-discovery" \
+  dvc-osf
+```
+
+Once [PR #10994](https://github.com/treeverse/dvc/pull/10994) is merged and
+released, a standard `pip install dvc dvc-osf` will work without the fork.
+
+### Standard Installation (post-merge)
 
 ```bash
 pip install dvc-osf
 ```
 
-Or install from source:
+DVC is installed automatically as a dependency.
+
+### Install from source
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/dvc-osf.git
+git clone https://github.com/adamlabadorf/dvc-osf.git
 cd dvc-osf
 pip install -e .
 ```
