@@ -358,6 +358,16 @@ class TestOSFFileSystemStripProtocol:
         result = OSFFileSystem._strip_protocol("abc123/file.csv")
         assert result == "abc123/file.csv"
 
+    def test_strip_protocol_with_list(self):
+        """Test that a list of paths is handled (DVC passes lists during push)."""
+        paths = ["osf://abc123/file.csv", "abc123/other.csv"]
+        result = OSFFileSystem._strip_protocol(paths)
+        assert result == ["abc123/file.csv", "abc123/other.csv"]
+
+    def test_strip_protocol_with_empty_list(self):
+        """Test that an empty list returns an empty list."""
+        assert OSFFileSystem._strip_protocol([]) == []
+
 
 class TestOSFWriteFile:
     """Tests for OSFWriteFile class."""

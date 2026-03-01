@@ -547,16 +547,21 @@ class OSFFileSystem(ObjectFileSystem):
         return self.project_id, self.provider, full_path
 
     @staticmethod
-    def _strip_protocol(path: str) -> str:
+    def _strip_protocol(path):
         """
         Remove osf:// protocol prefix from path.
 
+        Accepts a single path string or a list of path strings, matching
+        the fsspec AbstractFileSystem interface (DVC passes lists during push).
+
         Args:
-            path: Path that may have osf:// prefix
+            path: Path string or list of path strings
 
         Returns:
-            Path without protocol prefix
+            Path or list of paths without osf:// prefix
         """
+        if isinstance(path, list):
+            return [OSFFileSystem._strip_protocol(p) for p in path]
         if path.startswith("osf://"):
             return path[6:]
         return path
