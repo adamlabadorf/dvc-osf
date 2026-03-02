@@ -3,7 +3,7 @@ name = "dvc-osf"
 description = "DVC plugin for Open Science Framework (OSF) remote storage"
 readme = "README.md"
 requires-python = ">=3.9"
-version = "1.0.0"
+version = "1.0.1"
 license = {text = "Apache-2.0"}
 authors = [
     {name = "Adam Labadorf", email = "labadorf@bu.edu"},

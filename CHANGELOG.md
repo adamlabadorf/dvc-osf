@@ -2,6 +2,15 @@
 
 All notable changes to dvc-osf are documented here.
 
+## [1.0.1] - 2026-03-02
+
+### Fixed
+- CI: `uv sync --extra test` so pytest is actually installed in GitHub Actions
+- CI: use `astral-sh/setup-uv@v5` action; drop Python 3.8, add 3.13 to matrix
+- Tests: skip DVC-fork-dependent e2e tests when standard DVC is installed
+- Tests: fix `tomllib` import for Python 3.9/3.10 (stdlib only in 3.11+)
+- Tests: update `path_to_api_url` assertions to expect trailing slash
+
 ## [1.0.0] - 2026-03-02
 
 First stable release. `dvc push`, `dvc pull`, and `dvc status` work
