@@ -1,6 +1,11 @@
 """End-to-end DVC integration tests (Phase 5, Tasks 5.1–5.5).
 
 These tests exercise actual DVC commands with the OSF plugin.
+
+Tests in TestDvcRemoteAdd, TestDvcPushPull, and TestDvcVersion require the
+adamlabadorf/dvc fork (feature/plugin-schema-discovery) because standard DVC
+does not recognise osf:// URLs in its config schema.  Those tests are
+automatically skipped when the standard DVC is installed.
 """
 
 import os
@@ -9,6 +14,28 @@ import tempfile
 from pathlib import Path
 
 import pytest
+
+
+def _dvc_supports_osf() -> bool:
+    """Return True if the installed DVC accepts osf:// remote URLs."""
+    import tempfile as _tmp
+    import subprocess as _sp
+
+    with _tmp.TemporaryDirectory() as d:
+        _sp.run(["git", "init", d], capture_output=True)
+        _sp.run(["dvc", "init", d], capture_output=True, cwd=d)
+        result = _sp.run(
+            ["dvc", "remote", "add", "_probe", "osf://probe/osfstorage"],
+            capture_output=True,
+            cwd=d,
+        )
+        return result.returncode == 0
+
+
+requires_dvc_fork = pytest.mark.skipif(
+    not _dvc_supports_osf(),
+    reason="Requires adamlabadorf/dvc fork with osf:// schema support (PR #10994)",
+)
 
 
 def run_cmd(*args, cwd=None, env=None):
@@ -63,6 +90,7 @@ def dvc_repo(tmp_path):
     return repo
 
 
+@requires_dvc_fork
 class TestDvcRemoteAdd:
     """Task 5.2: DVC recognizes osf:// remote URLs."""
 
@@ -97,6 +125,7 @@ class TestDvcRemoteAdd:
         assert "osf://" in out
 
 
+@requires_dvc_fork
 class TestDvcPushPull:
     """Tasks 5.3-5.5: Push, pull, status with OSF remote.
 
@@ -132,6 +161,7 @@ class TestDvcPushPull:
         assert "Unsupported URL type" not in err
 
 
+@requires_dvc_fork
 class TestDvcVersion:
     """Verify plugin appears in dvc version output."""
 

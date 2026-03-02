@@ -179,7 +179,13 @@ class TestEntryPoints:
 
     def test_entry_points_in_pyproject(self):
         """Verify pyproject.toml has correct entry points."""
-        import tomllib
+        try:
+            import tomllib  # Python 3.11+
+        except ImportError:
+            try:
+                import tomli as tomllib  # fallback for 3.9/3.10
+            except ImportError:
+                pytest.skip("tomllib/tomli not available")
         from pathlib import Path
 
         pyproject = Path(__file__).parent.parent / "pyproject.toml"

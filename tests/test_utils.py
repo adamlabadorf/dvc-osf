@@ -150,10 +150,14 @@ class TestPathToApiUrl:
     """Tests for path_to_api_url function."""
 
     def test_path_to_api_url_simple(self):
-        """Test converting simple path to API URL."""
+        """Test converting simple path to API URL.
+
+        OSF requires a trailing slash on directory paths to return a listing;
+        path_to_api_url always appends one.
+        """
         url = path_to_api_url("abc123", "osfstorage", "data/file.csv")
         assert (
-            url == "https://api.osf.io/v2/nodes/abc123/files/osfstorage/data/file.csv"
+            url == "https://api.osf.io/v2/nodes/abc123/files/osfstorage/data/file.csv/"
         )
 
     def test_path_to_api_url_empty_path(self):
@@ -174,10 +178,10 @@ class TestPathToApiUrl:
         assert url.startswith("https://test.osf.io/v2")
 
     def test_path_to_api_url_nested_path(self):
-        """Test with nested directory path."""
+        """Test with nested directory path (trailing slash always added)."""
         url = path_to_api_url("abc123", "osfstorage", "data/subdir/file.csv")
         assert url == (
-            "https://api.osf.io/v2/nodes/abc123/files/osfstorage/data/subdir/file.csv"
+            "https://api.osf.io/v2/nodes/abc123/files/osfstorage/data/subdir/file.csv/"
         )
 
 
