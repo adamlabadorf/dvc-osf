@@ -5,9 +5,9 @@ from unittest.mock import Mock, patch
 import pytest
 
 from dvc_osf.exceptions import (
+    OSFConflictError,
     OSFIntegrityError,
     OSFNotFoundError,
-    OSFConflictError,
     OSFOperationNotSupportedError,
 )
 from dvc_osf.filesystem import OSFFile, OSFFileSystem

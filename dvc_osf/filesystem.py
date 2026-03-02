@@ -14,9 +14,9 @@ from .api import OSFAPIClient
 from .auth import get_token
 from .config import Config
 from .exceptions import (
+    OSFConflictError,
     OSFIntegrityError,
     OSFNotFoundError,
-    OSFConflictError,
     OSFOperationNotSupportedError,
 )
 from .utils import (
@@ -1186,7 +1186,7 @@ class OSFFileSystem(ObjectFileSystem):
         while next_url and isinstance(next_url, str):
             response = self.client.get(next_url)
             data = response.json()
-            for item in (data.get("data") or []):
+            for item in data.get("data") or []:
                 if item.get("attributes", {}).get("name", "") == filename:
                     upload_url = item.get("links", {}).get("upload")
                     if upload_url:

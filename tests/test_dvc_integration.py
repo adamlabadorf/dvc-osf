@@ -10,11 +10,11 @@ Covers:
 """
 
 import os
-import pytest
 from unittest.mock import patch
 
-from dvc_osf.filesystem import OSFFileSystem
+import pytest
 
+from dvc_osf.filesystem import OSFFileSystem
 
 # ============================================================
 # Task 1.3: _prepare_credentials tests
@@ -34,9 +34,7 @@ class TestPrepareCredentials:
 
     def test_env_var_osf_token_fallback(self):
         """OSF_TOKEN env var used when no explicit token."""
-        with patch.dict(
-            os.environ, {"OSF_TOKEN": "env_token"}, clear=False
-        ):
+        with patch.dict(os.environ, {"OSF_TOKEN": "env_token"}, clear=False):
             creds = OSFFileSystem._prepare_credentials(OSFFileSystem)
             assert creds["token"] == "env_token"
 
@@ -66,9 +64,7 @@ class TestPrepareCredentials:
 
     def test_endpoint_url_omitted_when_not_provided(self):
         """endpoint_url should not be in result when not provided."""
-        creds = OSFFileSystem._prepare_credentials(
-            OSFFileSystem, token="tok"
-        )
+        creds = OSFFileSystem._prepare_credentials(OSFFileSystem, token="tok")
         assert "endpoint_url" not in creds
 
 

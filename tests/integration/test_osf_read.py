@@ -218,7 +218,5 @@ class TestOSFFileSystemEdgeCases:
         url = f"osf://{OSF_TEST_PROJECT_ID}/osfstorage"
         fs = OSFFileSystem(url, token=OSF_TEST_TOKEN)
 
-        with pytest.raises(
-            NotImplementedError, match="Append mode not supported"
-        ):
+        with pytest.raises(NotImplementedError, match="Append mode not supported"):
             fs.open("test.txt", mode="ab")

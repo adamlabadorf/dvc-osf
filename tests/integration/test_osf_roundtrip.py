@@ -225,9 +225,9 @@ class TestOSFRoundtrip:
 
             # Verify checksum
             downloaded_checksum = compute_file_checksum(downloaded_file)
-            assert original_checksum == downloaded_checksum, (
-                f"Checksum mismatch in cycle {i}"
-            )
+            assert (
+                original_checksum == downloaded_checksum
+            ), f"Checksum mismatch in cycle {i}"
 
         # Clean up
         osf_fs.rm(remote_path)

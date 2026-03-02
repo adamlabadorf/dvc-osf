@@ -18,8 +18,8 @@ import pytest
 
 def _dvc_supports_osf() -> bool:
     """Return True if the installed DVC accepts osf:// remote URLs."""
-    import tempfile as _tmp
     import subprocess as _sp
+    import tempfile as _tmp
 
     with _tmp.TemporaryDirectory() as d:
         _sp.run(["git", "init", d], capture_output=True)
@@ -73,13 +73,23 @@ def dvc_repo(tmp_path):
     assert rc == 0, f"dvc init failed: {err}"
 
     rc, _, err = run_cmd(
-        "dvc", "remote", "add", "-d", "myosf", "osf://abc123/osfstorage",
+        "dvc",
+        "remote",
+        "add",
+        "-d",
+        "myosf",
+        "osf://abc123/osfstorage",
         cwd=str(repo),
     )
     assert rc == 0, f"dvc remote add failed: {err}"
 
     rc, _, err = run_cmd(
-        "dvc", "remote", "modify", "myosf", "token", "test_token_12345",
+        "dvc",
+        "remote",
+        "modify",
+        "myosf",
+        "token",
+        "test_token_12345",
         cwd=str(repo),
     )
     assert rc == 0, f"dvc remote modify failed: {err}"
@@ -104,7 +114,11 @@ class TestDvcRemoteAdd:
         run_cmd("dvc", "init", cwd=str(repo))
 
         rc, out, err = run_cmd(
-            "dvc", "remote", "add", "myosf", "osf://abc123/osfstorage",
+            "dvc",
+            "remote",
+            "add",
+            "myosf",
+            "osf://abc123/osfstorage",
             cwd=str(repo),
         )
         assert rc == 0, f"Failed: {err}"
@@ -112,7 +126,12 @@ class TestDvcRemoteAdd:
     def test_remote_modify_token(self, dvc_repo):
         """dvc remote modify for token should succeed."""
         rc, out, err = run_cmd(
-            "dvc", "remote", "modify", "myosf", "token", "new_token",
+            "dvc",
+            "remote",
+            "modify",
+            "myosf",
+            "token",
+            "new_token",
             cwd=str(dvc_repo),
         )
         assert rc == 0, f"Failed: {err}"

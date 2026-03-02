@@ -286,9 +286,9 @@ class TestOSFMoveDirectory:
 
             # Verify source files no longer exist
             for source_file in source_files:
-                assert not osf_fs.exists(source_file), (
-                    f"Expected {source_file} to be deleted"
-                )
+                assert not osf_fs.exists(
+                    source_file
+                ), f"Expected {source_file} to be deleted"
 
             # Verify all files were moved to destination
             for source_file in source_files:

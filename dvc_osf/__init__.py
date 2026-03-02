@@ -28,7 +28,7 @@ def _register_with_dvc():
 
     # 2. Register in DVC's config schema so ``dvc remote add`` accepts osf:// URLs
     try:
-        from dvc.config_schema import REMOTE_SCHEMAS, REMOTE_COMMON, SCHEMA, ByUrl
+        from dvc.config_schema import REMOTE_COMMON, REMOTE_SCHEMAS, SCHEMA, ByUrl
 
         if "osf" not in REMOTE_SCHEMAS:
             REMOTE_SCHEMAS["osf"] = {
@@ -48,4 +48,3 @@ def _register_with_dvc():
 
 
 _register_with_dvc()
-
