@@ -1,141 +1,51 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+All notable changes to dvc-osf are documented here.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [1.0.0] - 2026-03-02
 
-## [Unreleased]
+First stable release. `dvc push`, `dvc pull`, and `dvc status` work
+against OSF remotes for projects of any size.
 
-### Added - Phase 3: Write Operations
+### Features
+- Full `dvc push` / `dvc pull` / `dvc status` support against OSF storage
+- Content-addressed storage layout (`files/md5/ab/hash`) with automatic
+  intermediate directory creation (OSF does not auto-create nested paths)
+- ID-based directory navigation: walks OSF's internal file-ID tree instead
+  of constructing path URLs (nested path URLs return 404 on OSF's API)
+- Streaming uploads and downloads for memory efficiency
+- MD5 checksum verification after every upload
+- Pagination support throughout (large directories with >10 entries)
+- `REMOTE_CONFIG` schema discovery for DVC's plugin entry-point system
+  (requires `adamlabadorf/dvc` fork until upstream PR #10994 merges)
+- `dvc remote add`, `dvc remote modify`, `dvc version` all show `osf`
 
-- **Complete Write Operation Support**
-  - File upload operations: `put_file()`, `put()` with streaming for large files
-  - File deletion: `rm()`, `rm_file()` with recursive support
-  - Directory operations: `mkdir()`, `rmdir()` (no-op per OSF virtual directories)
-  - Write mode file handles: `open(mode='wb')` with `OSFWriteFile` class
-  - Automatic file versioning on overwrites (OSF native behavior)
-  
-- **Upload Features**
-  - Streaming uploads for large files (>5MB default) with configurable chunk size
-  - MD5 checksum verification for upload integrity
-  - Progress callback support: `callback(bytes_uploaded, total_bytes)`
-  - Configurable upload timeout (default: 300 seconds)
-  - Memory-efficient single-request streaming (OSF API constraint)
-  
-- **Error Handling for Write Operations**
-  - New exception types: `QuotaExceededError`, `FileLockedError`, `VersionConflictError`, `InsufficientStorageError`, `UploadError`
-  - Detailed error messages with remediation suggestions
-  - Bytes uploaded tracking in upload-related exceptions
-  - Smart retry logic (retry transient errors, skip version conflicts)
-  
-- **Upload Utilities**
-  - `compute_upload_checksum()` - MD5 computation during uploads
-  - `chunk_file()` - Generator for streaming file data in chunks
-  - `format_bytes()` - Human-readable byte counts for error messages
-  - `get_file_size()` - Extract size from file-like objects
-  - `determine_upload_strategy()` - Choose single vs chunked upload
-  - `ProgressTracker` class - Manage upload progress callbacks
-  
-- **Configuration Options**
-  - `OSF_UPLOAD_CHUNK_SIZE` - Chunk size for streaming uploads (default: 5MB)
-  - `OSF_UPLOAD_TIMEOUT` - Timeout for upload operations (default: 300s)
-  - `OSF_WRITE_BUFFER_SIZE` - Buffer size for write file objects (default: 8KB)
-  
-- **Testing - Phase 3**
-  - 240 total unit tests with 73% coverage for write operations
-  - 18 integration tests (11 write-specific, 7 roundtrip tests)
-  - Roundtrip tests: small files, large files (6MB), special characters, binary data, empty files
-  - All integration tests passing (100% pass rate)
-  - Error scenario coverage: quota exceeded, file locked, version conflicts, integrity errors
+### Installation
 
-### Added - Phase 1: Read Operations
+```bash
+# Install dvc-osf
+pip install git+https://github.com/adamlabadorf/dvc-osf.git
 
-- **Core OSF Filesystem Implementation (Phase 1 - Read-Only)**
-  - Complete OSF API v2 client with authentication, retry logic, and rate limiting
-  - OSF filesystem with read-only operations: `exists()`, `ls()`, `info()`, `open()`, `get_file()`
-  - Streaming file downloads with chunked reading for memory efficiency
-  - MD5 checksum verification during file downloads
-  - Connection pooling and HTTP session management
-  - Exponential backoff retry logic for transient failures
-  - Smart rate limit handling with `Retry-After` header support
-  - Comprehensive error handling with custom exception hierarchy
-  
-- **Authentication**
-  - Multi-source token retrieval (explicit parameter, DVC config, environment variable)
-  - Personal Access Token (PAT) support
-  - Token validation and secure handling (never logged)
-  
-- **Path Handling**
-  - OSF URL parsing: `osf://PROJECT_ID/PROVIDER/PATH` format
-  - Project ID validation
-  - Default provider support (`osfstorage`)
-  - Path normalization and manipulation utilities
-  
-- **Configuration**
-  - Environment variable support for all client settings
-  - Configurable timeouts, retries, chunk sizes, and connection pools
-  - Smart defaults optimized for typical use cases
-  
-- **Testing - Phase 1**
-  - 168 unit tests with 84% code coverage
-  - 14 integration tests with real OSF project
-  - Comprehensive mocking of OSF API responses
-  - Test fixtures for common scenarios
-  - Integration test infrastructure with automatic skipping when credentials unavailable
-  
-- **Documentation**
-  - Complete configuration guide with all options documented
-  - Troubleshooting section for common issues
-  - Examples for programmatic use and fsspec integration
-  - Integration test setup documentation
+# Configure a remote
+dvc remote add myremote osf://YOUR_PROJECT_ID/osfstorage
+dvc remote modify myremote token YOUR_OSF_PAT
+dvc remote default myremote
+```
 
-### Changed
-- Updated package dependencies: added `urllib3>=1.26.0`, `requests-cache>=1.0.0` (optional)
-- Enhanced README with write operation examples and full read/write capability documentation
-- Improved error messages for better debugging with upload-specific context
-- Enhanced exception hierarchy with upload-specific errors and attributes
+### Known limitations
+- Requires the `adamlabadorf/dvc` fork (`feature/plugin-schema-discovery`
+  branch) for `osf` to appear in `dvc remote add` tab-completion and
+  schema validation. Standard DVC works for push/pull without the fork.
+- No true multi-part chunked upload (OSF/WaterButler does not support it);
+  large files are streamed in a single PUT request.
 
-### Fixed
-- OSF API file lookups now correctly search parent directories (OSF doesn't support direct path queries)
-- Download links now use `files.osf.io` endpoint with Bearer auth (not `osf.io/download`)
-- Root directory queries handle list responses correctly
-- Upload operations correctly use single-request streaming (OSF doesn't support multi-request chunked uploads)
-
-### Fixed
-- OSF API file lookups now correctly search parent directories (OSF doesn't support direct path queries)
-- Download links now use `files.osf.io` endpoint with Bearer auth (not `osf.io/download`)
-- Root directory queries handle list responses correctly
-
-### Technical Details
-- **Architecture**: Extends `dvc_objects.fs.base.ObjectFileSystem`
-- **API**: Uses OSF API v2 (`https://api.osf.io/v2`)
-- **Authentication**: Bearer token in Authorization header
-- **Streaming**: 8KB default chunk size, configurable via `OSF_CHUNK_SIZE`
-- **Retries**: 3 attempts with 2x exponential backoff by default
-- **Checksums**: MD5 verification on all downloads
-
-### Limitations (Current)
-- osfstorage provider only (add-on providers planned for future)
-- Subdirectory uploads not yet implemented (root-level uploads fully supported)
-- Append operations not supported (OSF API constraint)
-- Sequential operations (no parallelization yet)
-- No resume capability for interrupted uploads/downloads
-
-## [0.1.0] - 2026-02-13
-
-### Added
-- Initial release
-- Basic project scaffolding
-- DVC and fsspec entry points configuration
-- OSFFileSystem placeholder implementation
-- OSF API client placeholder
-- Authentication handling structure
-- Custom exception classes
-- Utility functions for OSF URL handling
-- Configuration management
-
-### Notes
-- This is an alpha release with placeholder implementations
-- Actual OSF filesystem operations not yet implemented
-- Focus is on establishing project structure and development workflow
+### Bug fixes (relative to 0.x development)
+- Fixed HTTP 500 from OSF when pushing to nested content-addressed paths
+- Fixed `IndexError: tuple index out of range` during `dvc push` status check
+  (`find()` infinite recursion with string prefix parameter)
+- Fixed `AttributeError: 'OSFFileSystem' object has no attribute 'async_impl'`
+  when pushing many files in parallel
+- Fixed `AttributeError: property 'fs' has no setter` during fsspec init
+- Fixed pagination in `rm()`, `_get_upload_url()`, `ls()`, `info()`, `open()`
+- Fixed `_strip_protocol()` to handle list inputs (DVC passes lists during push)
+- Fixed `exists()` to return `list[bool]` when called with a list of paths

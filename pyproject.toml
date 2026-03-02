@@ -3,26 +3,26 @@ name = "dvc-osf"
 description = "DVC plugin for Open Science Framework (OSF) remote storage"
 readme = "README.md"
 requires-python = ">=3.9"
+version = "1.0.0"
 license = {text = "Apache-2.0"}
 authors = [
-    {name = "DVC-OSF Contributors", email = "support@dvc.org"},
+    {name = "Adam Labadorf", email = "labadorf@bu.edu"},
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
-dynamic = ["version"]
 dependencies = [
     "requests>=2.28.0",
     "urllib3>=1.26.0",
@@ -51,10 +51,10 @@ test = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/dvc-osf/dvc-osf"
-Documentation = "https://github.com/dvc-osf/dvc-osf#readme"
-Repository = "https://github.com/dvc-osf/dvc-osf"
-Issues = "https://github.com/dvc-osf/dvc-osf/issues"
+Homepage = "https://github.com/adamlabadorf/dvc-osf"
+Documentation = "https://github.com/adamlabadorf/dvc-osf#readme"
+Repository = "https://github.com/adamlabadorf/dvc-osf"
+Issues = "https://github.com/adamlabadorf/dvc-osf/issues"
 
 [project.entry-points."fsspec.specs"]
 osf = "dvc_osf.filesystem:OSFFileSystem"
@@ -77,8 +77,7 @@ exclude = ["tests*"]
 [tool.setuptools.data-files]
 "" = ["dvc_osf_register.pth"]
 
-[tool.setuptools.dynamic]
-version = {attr = "dvc_osf.__version__"}
+
 
 [tool.black]
 line-length = 88
