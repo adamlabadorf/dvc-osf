@@ -595,7 +595,7 @@ class OSFFileSystem(ObjectFileSystem):
             return path[6:]
         return path
 
-    def exists(self, path: str, **kwargs: Any) -> bool:
+    def exists(self, path: str, **kwargs: Any) -> bool:  # type: ignore[override]
         """
         Check if a path exists on OSF.
 
@@ -615,7 +615,7 @@ class OSFFileSystem(ObjectFileSystem):
         except OSFNotFoundError:
             return False
 
-    def ls(
+    def ls(  # type: ignore[override]
         self, path: str, detail: bool = False, **kwargs: Any
     ) -> Union[List[str], List[Dict[str, Any]]]:
         """
@@ -653,7 +653,7 @@ class OSFFileSystem(ObjectFileSystem):
                 for item in items
             ]
 
-    def find(
+    def find(  # type: ignore[override]
         self,
         path: str,
         maxdepth: Optional[int] = None,
@@ -824,7 +824,7 @@ class OSFFileSystem(ObjectFileSystem):
 
         return metadata
 
-    def info(self, path: str, **kwargs: Any) -> Dict[str, Any]:
+    def info(self, path: str, **kwargs: Any) -> Dict[str, Any]:  # type: ignore[override] # noqa: E501
         """
         Get information about a file or directory.
 
@@ -879,7 +879,7 @@ class OSFFileSystem(ObjectFileSystem):
         # File not found
         raise OSFNotFoundError(f"File not found: {path}")
 
-    def open(
+    def open(  # type: ignore[override]
         self, path: str, mode: str = "rb", **kwargs: Any
     ) -> Union[OSFFile, OSFWriteFile]:
         """
@@ -959,7 +959,7 @@ class OSFFileSystem(ObjectFileSystem):
 
         return OSFFile(stream_response, mode=mode)
 
-    def get_file(self, rpath: str, lpath: str, **kwargs: Any) -> None:
+    def get_file(self, rpath: str, lpath: str, **kwargs: Any) -> None:  # type: ignore[override] # noqa: E501
         """
         Download a file from OSF to local path.
 
@@ -1007,7 +1007,7 @@ class OSFFileSystem(ObjectFileSystem):
                     actual_checksum=actual_checksum,
                 )
 
-    def put_file(
+    def put_file(  # type: ignore[override]
         self,
         lpath: str,
         rpath: str,
@@ -1222,7 +1222,7 @@ class OSFFileSystem(ObjectFileSystem):
                 actual_checksum=remote_checksum,
             )
 
-    def put(
+    def put(  # type: ignore[override]
         self,
         file_obj: BinaryIO,
         rpath: str,
@@ -1381,7 +1381,7 @@ class OSFFileSystem(ObjectFileSystem):
             except Exception as e:
                 logger.warning(f"Failed to clean up temp file {temp_path}: {e}")
 
-    def mv(
+    def mv(  # type: ignore[override]
         self,
         path1: str,
         path2: str,
@@ -1711,7 +1711,7 @@ class OSFFileSystem(ObjectFileSystem):
         # This is a no-op that always succeeds
         pass
 
-    def rm(self, path: str, recursive: bool = False, **kwargs: Any) -> None:
+    def rm(self, path: str, recursive: bool = False, **kwargs: Any) -> None:  # type: ignore[override] # noqa: E501
         """
         Delete a file or directory from OSF.
 

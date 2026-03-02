@@ -108,6 +108,7 @@ strict_equality = true
 
 [[tool.mypy.overrides]]
 module = [
+    "dvc.*",
     "dvc_objects.*",
     "fsspec.*",
 ]

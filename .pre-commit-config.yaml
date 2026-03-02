@@ -34,8 +34,8 @@ repos:
     rev: v1.15.0
     hooks:
       - id: mypy
-        additional_dependencies: [types-requests]
-        args: [--ignore-missing-imports]
+        additional_dependencies: [types-requests, dvc-objects]
+        # No --ignore-missing-imports; pyproject.toml [tool.mypy.overrides] handles it.
         # Only type-check source package; test files use intentional wrong-type
         # calls to exercise error-handling paths.
         files: ^dvc_osf/
