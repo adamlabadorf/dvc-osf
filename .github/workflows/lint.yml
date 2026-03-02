@@ -19,26 +19,19 @@ jobs:
         python-version: "3.11"
 
     - name: Install uv
-      run: |
-        curl -LsSf https://astral.sh/uv/install.sh | sh
-        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      uses: astral-sh/setup-uv@v5
 
     - name: Install dependencies
-      run: |
-        uv sync
+      run: uv sync --extra dev
 
     - name: Run black
-      run: |
-        uv run black --check dvc_osf tests
+      run: uv run black --check dvc_osf tests
 
     - name: Run isort
-      run: |
-        uv run isort --check dvc_osf tests
+      run: uv run isort --check dvc_osf tests
 
     - name: Run flake8
-      run: |
-        uv run flake8 dvc_osf tests
+      run: uv run flake8 dvc_osf tests
 
     - name: Run mypy
-      run: |
-        uv run mypy dvc_osf
+      run: uv run mypy dvc_osf
