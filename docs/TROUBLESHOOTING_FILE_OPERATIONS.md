@@ -254,7 +254,7 @@ result = fs.batch_copy(copy_pairs)
 
 if result['failed'] > 0:
     print(f"Failed operations: {result['errors']}")
-    
+
     # Retry failed operations
     for source, error in result['errors']:
         print(f"Retrying {source}: {error}")
@@ -389,7 +389,7 @@ for i in range(0, len(all_pairs), batch_size):
     batch = all_pairs[i:i + batch_size]
     result = fs.batch_copy(batch)
     print(f"Batch {i//batch_size + 1}: {result['successful']} succeeded")
-    
+
     # Delay between batches
     if i + batch_size < len(all_pairs):
         time.sleep(5)
@@ -434,14 +434,14 @@ def safe_copy(fs, source, destination, overwrite=False):
     # Check source exists
     if not fs.exists(source):
         raise ValueError(f"Source not found: {source}")
-    
+
     # Check destination
     if fs.exists(destination) and not overwrite:
         raise ValueError(f"Destination exists: {destination}")
-    
+
     # Perform copy
     fs.cp(source, destination, overwrite=overwrite)
-    
+
     # Verify success
     if fs.exists(destination):
         print(f"✓ Copied {source} → {destination}")
@@ -455,18 +455,18 @@ def safe_copy(fs, source, destination, overwrite=False):
 def robust_batch_copy(fs, pairs, max_retries=3):
     """Batch copy with retry logic."""
     result = fs.batch_copy(pairs)
-    
+
     # Retry failed operations
     retry_pairs = [(src, dst) for src, _ in result['errors']]
     retry_count = 0
-    
+
     while retry_pairs and retry_count < max_retries:
         retry_count += 1
         print(f"Retry {retry_count}: {len(retry_pairs)} files")
-        
+
         result = fs.batch_copy(retry_pairs)
         retry_pairs = [(src, dst) for src, _ in result['errors']]
-    
+
     return result
 ```
 
@@ -477,16 +477,16 @@ class ProgressTracker:
     def __init__(self, total):
         self.start_time = time.time()
         self.total = total
-    
+
     def __call__(self, current, total, path, operation):
         elapsed = time.time() - self.start_time
         rate = current / elapsed if elapsed > 0 else 0
         eta = (total - current) / rate if rate > 0 else 0
-        
+
         percent = (current / total) * 100
         print(f"\r{operation}: {current}/{total} ({percent:.1f}%) "
               f"ETA: {eta:.0f}s - {path}", end="")
-        
+
         if current == total:
             print()  # New line when complete
 
@@ -504,21 +504,21 @@ def atomic_like_move(fs, source, destination):
     """Move with verification and rollback capability."""
     # Step 1: Copy
     fs.cp(source, destination)
-    
+
     # Step 2: Verify copy succeeded
     if not fs.exists(destination):
         raise RuntimeError("Copy verification failed")
-    
+
     # Step 3: Verify checksums match (if available)
     src_info = fs.info(source)
     dst_info = fs.info(destination)
-    
+
     if 'checksum' in src_info and 'checksum' in dst_info:
         if src_info['checksum'] != dst_info['checksum']:
             # Rollback - delete bad destination
             fs.rm_file(destination)
             raise RuntimeError("Checksum mismatch - copy failed")
-    
+
     # Step 4: Delete source
     try:
         fs.rm_file(source)

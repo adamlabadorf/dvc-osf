@@ -40,7 +40,7 @@
 
 **Decision**: Create a separate `OSFAPIClient` class in `api.py` rather than embedding API logic directly in `OSFFileSystem`.
 
-**Rationale**: 
+**Rationale**:
 - Separation of concerns: filesystem abstraction vs. HTTP client logic
 - Easier testing: can mock the API client independently
 - Reusability: API client can be used by other components
@@ -241,15 +241,15 @@ class Config:
 ## Risks / Trade-offs
 
 ### Risk: OSF API Rate Limiting
-**Impact**: Operations could fail if rate limit is hit  
-**Mitigation**: 
+**Impact**: Operations could fail if rate limit is hit
+**Mitigation**:
 - Implement exponential backoff for 429 responses
 - Add configurable retry delays
 - Document rate limit behavior in user guide
 - Consider request caching in future phase
 
 ### Risk: OSF API Changes
-**Impact**: Breaking changes in OSF API could break the plugin  
+**Impact**: Breaking changes in OSF API could break the plugin
 **Mitigation**:
 - Pin to OSF API v2 explicitly in all requests
 - Monitor OSF API changelog
@@ -257,7 +257,7 @@ class Config:
 - Version the plugin to allow users to pin to working version
 
 ### Risk: Large File Memory Usage
-**Impact**: Very large files could cause memory issues  
+**Impact**: Very large files could cause memory issues
 **Mitigation**:
 - Use streaming for all file operations
 - Process files in configurable chunks (default 8KB)
@@ -265,7 +265,7 @@ class Config:
 - Consider memory profiling in future optimization phase
 
 ### Risk: Network Failures During Download
-**Impact**: Large downloads could fail partway through  
+**Impact**: Large downloads could fail partway through
 **Mitigation**:
 - Implement retry logic for transient failures
 - Accept full re-download for MVP (no resume capability)
@@ -273,7 +273,7 @@ class Config:
 - DVC's cache layer provides some protection against re-downloads
 
 ### Risk: Authentication Token Security
-**Impact**: Leaked tokens could compromise OSF projects  
+**Impact**: Leaked tokens could compromise OSF projects
 **Mitigation**:
 - Document secure token storage practices
 - Never log tokens
@@ -282,25 +282,25 @@ class Config:
 - Recommend minimum-scope tokens in documentation
 
 ### Trade-off: Read-Only Implementation
-**Decision**: Implement only read operations in this phase  
-**Benefit**: Faster to implement, test, and validate  
-**Cost**: Can't use for `dvc push`, only `dvc pull`  
+**Decision**: Implement only read operations in this phase
+**Benefit**: Faster to implement, test, and validate
+**Cost**: Can't use for `dvc push`, only `dvc pull`
 **Justification**: De-risk the project by validating approach before adding write complexity
 
 ### Trade-off: Sequential Downloads
-**Decision**: Download files one at a time (no parallelization)  
-**Benefit**: Simpler implementation, easier to debug  
-**Cost**: Slower for many small files  
+**Decision**: Download files one at a time (no parallelization)
+**Benefit**: Simpler implementation, easier to debug
+**Cost**: Slower for many small files
 **Justification**: MVP focus, can optimize later based on real usage patterns
 
 ### Trade-off: OSFStorage Only
-**Decision**: Support only osfstorage provider, not add-ons (Dropbox, etc.)  
-**Benefit**: Reduces complexity, focuses on core OSF functionality  
-**Cost**: Can't use add-on storage providers  
+**Decision**: Support only osfstorage provider, not add-ons (Dropbox, etc.)
+**Benefit**: Reduces complexity, focuses on core OSF functionality
+**Cost**: Can't use add-on storage providers
 **Justification**: Vast majority of OSF users use osfstorage, add-ons can be added later if needed
 
 ### Trade-off: MD5 Checksums
-**Decision**: Use MD5 for integrity checking  
-**Benefit**: Fast, matches OSF's provided checksums  
-**Cost**: Not cryptographically secure (but not needed for integrity)  
+**Decision**: Use MD5 for integrity checking
+**Benefit**: Fast, matches OSF's provided checksums
+**Cost**: Not cryptographically secure (but not needed for integrity)
 **Justification**: Sufficient for detecting corruption, matches OSF API capabilities

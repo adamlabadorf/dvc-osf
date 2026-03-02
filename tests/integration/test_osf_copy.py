@@ -357,7 +357,7 @@ class TestOSFCopyConstraints:
         """Test that cross-project copy raises OSFOperationNotSupportedError."""
         source, _ = test_file_small
         # Use different project ID in destination
-        dest = f"osf://different_project/osfstorage/file.txt"
+        dest = "osf://different_project/osfstorage/file.txt"
 
         with pytest.raises(OSFOperationNotSupportedError):
             osf_fs.cp(source, dest)

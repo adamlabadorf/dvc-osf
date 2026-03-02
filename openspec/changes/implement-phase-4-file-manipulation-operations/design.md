@@ -179,15 +179,15 @@ def cp(self, path1: str, path2: str, overwrite: bool = True, **kwargs: Any) -> N
 ## Risks / Trade-offs
 
 ### Risk: Incomplete operation leaves duplicate or missing files
-**Impact**: Medium - User may have duplicate files or orphaned data  
-**Mitigation**: 
+**Impact**: Medium - User may have duplicate files or orphaned data
+**Mitigation**:
 - Implement copy-then-delete for moves (copy failure is safe)
 - Log all operations for troubleshooting
 - Document behavior in docstrings
 - Future: Add transaction log or cleanup utility
 
 ### Risk: Performance degradation with large files
-**Impact**: High - Copy/move of large files will be slow (download + upload)  
+**Impact**: High - Copy/move of large files will be slow (download + upload)
 **Mitigation**:
 - Document performance characteristics
 - Stream data through temp files (don't load in memory)
@@ -195,34 +195,34 @@ def cp(self, path1: str, path2: str, overwrite: bool = True, **kwargs: Any) -> N
 - Provide progress callbacks for long operations
 
 ### Risk: OSF rate limiting on batch operations
-**Impact**: Medium - Batch operations may hit rate limits  
+**Impact**: Medium - Batch operations may hit rate limits
 **Mitigation**:
 - Existing retry logic with exponential backoff handles this
 - Sequential operations reduce concurrent request load
 - Future: Add batch size configuration and throttling
 
 ### Risk: Cross-storage provider operations fail
-**Impact**: Low - Users attempt cross-provider copies and get errors  
+**Impact**: Low - Users attempt cross-provider copies and get errors
 **Mitigation**:
 - Validate paths before attempting operations
 - Provide clear error messages with actionable guidance
 - Document limitation in user-facing docs
 
 ### Risk: OSF virtual directories cause confusion
-**Impact**: Low - Directory operations behave differently than local filesystem  
+**Impact**: Low - Directory operations behave differently than local filesystem
 **Mitigation**:
 - Document that OSF directories are virtual
 - Copy/move operations work on files, recursively handle directories
 - Consistent with existing `rm()` behavior
 
 ### Trade-off: Atomicity vs Reliability
-**Choice**: Prioritize reliability over atomicity  
-**Consequence**: Move operations are not atomic (file may be temporarily duplicated)  
+**Choice**: Prioritize reliability over atomicity
+**Consequence**: Move operations are not atomic (file may be temporarily duplicated)
 **Justification**: OSF API doesn't provide atomic move; duplicate files are safer than data loss
 
 ### Trade-off: Performance vs Simplicity
-**Choice**: Use download-upload fallback vs native API operations  
-**Consequence**: Slower operations, more bandwidth usage  
+**Choice**: Use download-upload fallback vs native API operations
+**Consequence**: Slower operations, more bandwidth usage
 **Justification**: Guaranteed correctness; performance optimization planned for Phase 6
 
 ## Migration Plan
@@ -246,7 +246,7 @@ def cp(self, path1: str, path2: str, overwrite: bool = True, **kwargs: Any) -> N
 
 ## Open Questions
 
-1. **Native OSF API for copy/move**: Does WaterButler provide efficient copy/move endpoints? 
+1. **Native OSF API for copy/move**: Does WaterButler provide efficient copy/move endpoints?
    - **Resolution path**: Research OSF WaterButler docs, test with OSF development instance
    - **Timeline**: Investigate during implementation, optimize in Phase 6 if available
 

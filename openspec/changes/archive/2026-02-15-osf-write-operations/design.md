@@ -55,13 +55,13 @@ The OSF API v2 uses a RESTful JSON API structure where:
   - Simpler, fewer API calls, lower overhead
   - OSF API accepts entire file in one request body
   - Sufficient for most DVC artifacts (model checkpoints, small datasets)
-  
+
 - **Large files (≥5MB)**: Use chunked uploads via multiple PUT requests
   - OSF API supports chunked uploads through range headers
   - Prevents memory exhaustion from loading entire file
   - Better progress tracking granularity
   - More resilient to network interruptions (can retry individual chunks)
-  
+
 - **Threshold configurable** via `OSF_UPLOAD_CHUNK_SIZE` environment variable
 
 **Alternatives Considered**:

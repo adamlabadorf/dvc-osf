@@ -49,7 +49,7 @@ class OSFAPIClient:
             base_url: API base URL (defaults to Config.API_BASE_URL)
             timeout: Request timeout in seconds (defaults to Config.DEFAULT_TIMEOUT)
             max_retries: Maximum retry attempts (defaults to Config.MAX_RETRIES)
-            upload_timeout: Upload timeout in seconds (defaults to Config.OSF_UPLOAD_TIMEOUT)
+            upload_timeout: Upload timeout in seconds (defaults to Config.OSF_UPLOAD_TIMEOUT)  # noqa: E501
         """
         self.token = token
         self.base_url = (base_url or Config.API_BASE_URL).rstrip("/")
@@ -246,7 +246,7 @@ class OSFAPIClient:
             )
         elif status_code == 409:
             logger.warning(
-                f"Version conflict detected (409): {error_message or 'File version conflict'}"
+                f"Version conflict detected (409): {error_message or 'File version conflict'}"  # noqa: E501
             )
             raise OSFVersionConflictError(
                 error_message
@@ -260,13 +260,13 @@ class OSFAPIClient:
             )
         elif status_code == 413:
             logger.error(
-                f"Storage quota exceeded (413): {error_message or 'OSF storage quota exceeded'}"
+                f"Storage quota exceeded (413): {error_message or 'OSF storage quota exceeded'}"  # noqa: E501
             )
             raise OSFQuotaExceededError(
                 error_message
                 or (
                     "OSF storage quota exceeded. "
-                    "Please free up space in your OSF project or upgrade your storage plan. "
+                    "Please free up space in your OSF project or upgrade your storage plan. "  # noqa: E501
                     "Visit https://osf.io/settings/ to manage your storage."
                 ),
                 status_code=status_code,

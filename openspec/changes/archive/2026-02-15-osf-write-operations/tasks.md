@@ -18,7 +18,7 @@
 
 - [x] 2.1 Add upload_timeout parameter to OSFAPIClient.__init__() (default from Config.OSF_UPLOAD_TIMEOUT)
 - [x] 2.2 Update _handle_response() to map 413 status to OSFQuotaExceededError
-- [x] 2.3 Update _handle_response() to map 423 status to OSFFileLockedError  
+- [x] 2.3 Update _handle_response() to map 423 status to OSFFileLockedError
 - [x] 2.4 Update _handle_response() to map 409 status to OSFVersionConflictError during writes
 - [x] 2.5 Implement upload_file() method for streaming file uploads with progress callback
 - [x] 2.6 Implement upload_chunk() method for uploading individual file chunks

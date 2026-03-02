@@ -125,3 +125,23 @@ license = "Apache-2.0"
 dev = [
     "types-requests>=2.32.0.20241016",
 ]
+
+[tool.flake8]
+max-line-length = 88
+extend-ignore = [
+    "E203",  # whitespace before ':' (conflicts with black)
+    "W503",  # line break before binary operator (conflicts with black)
+]
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "openspec",
+    "docs",
+    "build",
+    "dist",
+]
+per-file-ignores = [
+    # test files: allow longer lines in assertions/error messages
+    "tests/*:E501",
+]

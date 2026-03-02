@@ -233,7 +233,7 @@ These errors fail immediately without retry:
 ```python
 from dvc_osf.exceptions import (
     OSFAuthenticationError,  # 401 - invalid token
-    OSFPermissionError,       # 403 - insufficient permissions  
+    OSFPermissionError,       # 403 - insufficient permissions
     OSFNotFoundError,         # 404 - resource not found
     OSFRateLimitError,        # 429 - rate limit exceeded
     OSFConnectionError,       # Network/connection issues

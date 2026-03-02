@@ -37,7 +37,7 @@ This is the initial setup for the dvc-osf project, a Python plugin that integrat
 
 **Decision**: Use one `pyproject.toml` that works with both uv and poetry, rather than maintaining separate configuration files.
 
-**Rationale**: 
+**Rationale**:
 - Both tools support PEP 621 standard `[project]` section
 - Poetry has improved PEP 621 support (poetry 1.5+)
 - Reduces duplication and maintenance burden
@@ -174,7 +174,7 @@ version = {attr = "dvc_osf.__version__"}
 ### Risk: Poetry and uv Lock File Divergence
 **Description**: Different tools may resolve dependencies differently, leading to inconsistent environments.
 
-**Mitigation**: 
+**Mitigation**:
 - Document that developers should pick one tool and stick with it
 - CI will use uv for speed, but test with both lock files periodically
 - Keep dependency constraints specific enough to avoid ambiguity
@@ -225,7 +225,7 @@ version = {attr = "dvc_osf.__version__"}
 - Pre-commit hooks install and run successfully
 - Package can be imported: `python -c "import dvc_osf"`
 
-**Rollback Strategy**: 
+**Rollback Strategy**:
 - N/A for initial setup (no existing state to roll back to)
 - If issues arise, can delete and recreate files
 
@@ -233,7 +233,7 @@ version = {attr = "dvc_osf.__version__"}
 
 1. **Should we include sample test data in the repository initially?**
    - Lean toward yes for integration tests, but can add later
-   
+
 2. **What version constraints for dependencies?**
    - Propose: `dvc-objects>=5.0.0`, `requests>=2.28.0`, `fsspec>=2023.1.0`
    - Based on project requirements and stability

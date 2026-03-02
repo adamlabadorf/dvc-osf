@@ -218,7 +218,7 @@ def progress_callback(bytes_uploaded, total_bytes):
 
 # Upload with progress tracking
 fs.put_file(
-    "local_file.dat", 
+    "local_file.dat",
     "osf://abc123/osfstorage/remote_file.dat",
     callback=progress_callback
 )
@@ -617,37 +617,37 @@ If you use dvc-osf in your research, please cite:
 
 ## FAQ
 
-**Q: Do I need an OSF account to use this plugin?**  
+**Q: Do I need an OSF account to use this plugin?**
 A: Yes, you need an OSF account and a personal access token.
 
-**Q: Is OSF storage free?**  
+**Q: Is OSF storage free?**
 A: Yes, OSF provides free storage for research projects, with reasonable usage limits.
 
-**Q: Can I use this with private OSF projects?**  
+**Q: Can I use this with private OSF projects?**
 A: Yes, the plugin works with both public and private OSF projects, as long as you have the appropriate access permissions.
 
-**Q: Can I upload data to OSF with this plugin?**  
+**Q: Can I upload data to OSF with this plugin?**
 A: Yes! Phase 3 includes full write operation support. Use `dvc push` to upload data to OSF. Make sure your token has the `osf.full_write` scope.
 
-**Q: Does the plugin handle large file uploads?**  
+**Q: Does the plugin handle large file uploads?**
 A: Yes, the plugin uses streaming uploads for large files (>5MB by default), which keeps memory usage low and provides progress tracking. You can configure the chunk size with `OSF_UPLOAD_CHUNK_SIZE`.
 
-**Q: What happens when I upload a file that already exists on OSF?**  
+**Q: What happens when I upload a file that already exists on OSF?**
 A: OSF automatically creates a new version of the file. The plugin doesn't delete old versions - you can access them through the OSF web interface.
 
-**Q: Does this support OSF add-on storage providers (like Dropbox, Google Drive)?**  
+**Q: Does this support OSF add-on storage providers (like Dropbox, Google Drive)?**
 A: Not currently. The plugin supports `osfstorage` only. Add-on provider support is planned for future releases.
 
-**Q: Can I copy or move files between different OSF projects?**  
+**Q: Can I copy or move files between different OSF projects?**
 A: No, copy and move operations only work within the same OSF project and storage provider. To transfer files between projects, download from one project and upload to another.
 
-**Q: Are move operations atomic on OSF?**  
+**Q: Are move operations atomic on OSF?**
 A: No, move operations use a copy-then-delete strategy for reliability. If the delete fails after a successful copy, the source file may remain (creating a duplicate). This prioritizes data safety over atomicity.
 
-**Q: How do I copy multiple files efficiently?**  
+**Q: How do I copy multiple files efficiently?**
 A: Use the `batch_copy()` method which handles multiple files in one operation and provides detailed results. Batch operations are more efficient than individual copy operations and provide progress tracking.
 
-**Q: What happens if a file copy fails in the middle?**  
+**Q: What happens if a file copy fails in the middle?**
 A: The plugin verifies checksums after each copy. If data corruption is detected, the operation fails with an integrity error, and you can safely retry. The destination file will not be left in a corrupted state.
 
 ---

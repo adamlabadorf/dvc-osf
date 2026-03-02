@@ -279,7 +279,7 @@ class OSFWriteFile(io.IOBase):
             api_client: OSF API client instance
             upload_url: URL for uploading the file
             mode: File mode ('wb' for binary, 'w' for text)
-            chunk_size: Chunk size for uploads (defaults to Config.OSF_UPLOAD_CHUNK_SIZE)
+            chunk_size: Chunk size for uploads (defaults to Config.OSF_UPLOAD_CHUNK_SIZE) # noqa: E501
         """
         self.api_client = api_client
         self.upload_url = upload_url
@@ -390,7 +390,7 @@ class OSFFileSystem(ObjectFileSystem):
         "token": str,  # OSF personal access token
         "project_id": str,  # OSF project ID (can also come from URL)
         "provider": str,  # Storage provider (default: osfstorage)
-        "endpoint_url": str,  # Custom OSF API endpoint (default: https://api.osf.io/v2/)
+        "endpoint_url": str,  # Custom OSF API endpoint (default: https://api.osf.io/v2/) # noqa: E501
     }
 
     def __init__(
@@ -1090,7 +1090,7 @@ class OSFFileSystem(ObjectFileSystem):
         dir_path: str,
         create_missing: bool = False,
     ) -> tuple:
-        """Walk the directory tree using OSF file IDs and return URLs for the target dir.
+        """Walk the directory tree using OSF file IDs and return URLs for the target dir. # noqa: E501
 
         OSF uses internal file IDs in API and WaterButler URLs for all
         directories below the root — path-constructed URLs only work at root
@@ -1106,7 +1106,7 @@ class OSFFileSystem(ObjectFileSystem):
         Returns:
             ``(listing_url, waterbutler_url)`` for the target directory.
             ``listing_url`` is the OSF API URL to list its contents.
-            ``waterbutler_url`` is the WaterButler URL base for uploads/subfolder creation.
+            ``waterbutler_url`` is the WaterButler URL base for uploads/subfolder creation. # noqa: E501
         """
         parts = [p for p in dir_path.strip("/").split("/") if p]
         root_listing_url = path_to_api_url(project_id, provider, "")
@@ -1686,7 +1686,7 @@ class OSFFileSystem(ObjectFileSystem):
         }
 
         logger.info(
-            f"Batch delete completed: {success} succeeded, {failed} failed out of {total}"
+            f"Batch delete completed: {success} succeeded, {failed} failed out of {total}"  # noqa: E501
         )
 
         return result

@@ -10,7 +10,6 @@ automatically skipped when the standard DVC is installed.
 
 import os
 import subprocess
-import tempfile
 from pathlib import Path
 
 import pytest

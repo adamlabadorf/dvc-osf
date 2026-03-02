@@ -784,7 +784,7 @@ class TestOSFFileSystemWriteMethods:
         fs.mkdir("osf://abc123/osfstorage/newdir")
 
         # Client should only be initialized, not called
-        mock_client = mock_client_class.return_value
+        mock_client = mock_client_class.return_value  # noqa: F841
         mock_client.get.assert_not_called()
         mock_client.put.assert_not_called()
 
@@ -797,7 +797,7 @@ class TestOSFFileSystemWriteMethods:
         fs.rmdir("osf://abc123/osfstorage/somedir")
 
         # Client should only be initialized, not called
-        mock_client = mock_client_class.return_value
+        mock_client = mock_client_class.return_value  # noqa: F841
         mock_client.get.assert_not_called()
         mock_client.delete.assert_not_called()
 
@@ -850,7 +850,7 @@ class TestCopyOperations:
         mock_mkstemp.return_value = (42, "/tmp/test_temp")
         mock_exists.return_value = True
 
-        mock_client = mock_client_class.return_value
+        mock_client = mock_client_class.return_value  # noqa: F841
         fs = OSFFileSystem(token="test_token")
 
         # Mock info() to return file metadata
@@ -926,7 +926,9 @@ class TestCopyOperations:
 
         with patch.object(fs, "info") as mock_info, patch.object(
             fs, "exists"
-        ) as mock_exists, patch.object(fs, "get_file") as mock_get, patch.object(
+        ) as mock_exists, patch.object(
+            fs, "get_file"
+        ) as mock_get, patch.object(  # noqa: F841
             fs, "put_file"
         ) as mock_put:
             mock_info.side_effect = [
@@ -997,9 +999,11 @@ class TestCopyOperations:
 
             with patch("dvc_osf.filesystem.tempfile.mkstemp") as mock_mkstemp, patch(
                 "os.path.exists"
-            ) as mock_exists_os, patch("os.remove") as mock_remove, patch(
+            ) as mock_exists_os, patch(
+                "os.remove"
+            ) as mock_remove, patch(  # noqa: F841
                 "os.close"
-            ) as mock_close:
+            ) as mock_close:  # noqa: F841
                 mock_mkstemp.return_value = (42, "/tmp/test_temp")
                 mock_exists_os.return_value = True
 
@@ -1107,7 +1111,9 @@ class TestMoveOperations:
 
         with patch.object(fs, "exists") as mock_exists, patch.object(
             fs, "cp"
-        ) as mock_cp, patch.object(fs, "rm") as mock_rm:
+        ) as mock_cp, patch.object(
+            fs, "rm"
+        ) as mock_rm:  # noqa: F841
             mock_exists.side_effect = [False, True]
 
             fs.mv(

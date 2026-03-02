@@ -316,7 +316,7 @@ class TestOSFMoveConstraints:
         """Test that cross-project move raises OSFOperationNotSupportedError."""
         source, _ = test_file
         # Use different project ID in destination
-        dest = f"osf://different_project/osfstorage/file.txt"
+        dest = "osf://different_project/osfstorage/file.txt"
 
         with pytest.raises(OSFOperationNotSupportedError):
             osf_fs.mv(source, dest)
