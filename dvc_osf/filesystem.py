@@ -378,6 +378,12 @@ class OSFFileSystem(ObjectFileSystem):
     REQUIRES = {"requests": "requests"}
     PARAM_CHECKSUM = "md5"
 
+    # OSF uses a synchronous implementation; declare explicitly so that
+    # dvc_objects._put (and other callers) don't raise AttributeError when
+    # they check `fs.async_impl` on our OSFFileSystem instance directly
+    # (which happens because our `fs` property returns `self`).
+    async_impl = False
+
     # DVC config schema for OSF remotes (discovered via entry points)
     REMOTE_CONFIG = {
         "url": str,  # osf://project_id/provider/path
