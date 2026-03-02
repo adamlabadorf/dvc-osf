@@ -28,5 +28,14 @@ repos:
     rev: 7.2.0
     hooks:
       - id: flake8
-        # mypy covers type issues; keep flake8 fast by skipping docstring checks
         additional_dependencies: []
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.15.0
+    hooks:
+      - id: mypy
+        additional_dependencies: [types-requests]
+        args: [--ignore-missing-imports]
+        # Only type-check source package; test files use intentional wrong-type
+        # calls to exercise error-handling paths.
+        files: ^dvc_osf/

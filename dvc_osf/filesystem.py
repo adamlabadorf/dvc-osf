@@ -122,7 +122,7 @@ class OSFFile(io.IOBase):
         else:
             return data.decode("utf-8")
 
-    def readline(self, size: int = -1) -> Union[bytes, str]:
+    def readline(self, size: int = -1) -> Union[bytes, str]:  # type: ignore[override]
         """
         Read a single line from the file.
 
@@ -149,20 +149,26 @@ class OSFFile(io.IOBase):
 
             # Look for newline
             if "b" in self.mode:
-                newline_pos = chunk.find(b"\n")
+                bchunk = chunk if isinstance(chunk, bytes) else chunk.encode("utf-8")
+                newline_pos = bchunk.find(b"\n")
             else:
-                newline_pos = chunk.find("\n")
+                schunk = chunk if isinstance(chunk, str) else chunk.decode("utf-8")
+                newline_pos = schunk.find("\n")
 
             if newline_pos >= 0:
                 # Found newline - include it and stop
                 line_parts.append(chunk[: newline_pos + 1])
                 # Put the rest back in the buffer
                 remaining = chunk[newline_pos + 1 :]
+                remaining_bytes = (
+                    remaining
+                    if isinstance(remaining, bytes)
+                    else remaining.encode("utf-8")
+                )
+                self._buffer = remaining_bytes + self._buffer
                 if "b" in self.mode:
-                    self._buffer = remaining.encode("utf-8") + self._buffer
-                    self._position -= len(remaining.encode("utf-8"))
+                    self._position -= len(remaining_bytes)
                 else:
-                    self._buffer = remaining.encode("utf-8") + self._buffer
                     self._position -= len(remaining)
                 break
             else:
@@ -174,11 +180,11 @@ class OSFFile(io.IOBase):
         else:
             return "".join(line_parts)  # type: ignore
 
-    def __iter__(self) -> "OSFFile":
+    def __iter__(self) -> "OSFFile":  # type: ignore[override]
         """Return iterator for line-by-line reading."""
         return self
 
-    def __next__(self) -> Union[bytes, str]:
+    def __next__(self) -> Union[bytes, str]:  # type: ignore[override]
         """Read next line when iterating."""
         line = self.readline()
         if not line:
@@ -984,8 +990,9 @@ class OSFFileSystem(ObjectFileSystem):
                     if not chunk:
                         break
 
-                    local_file.write(chunk)
-                    md5_hash.update(chunk)
+                    chunk_bytes = chunk if isinstance(chunk, bytes) else chunk.encode()
+                    local_file.write(chunk_bytes)
+                    md5_hash.update(chunk_bytes)
 
         # Verify checksum if available
         if expected_checksum:
@@ -1190,7 +1197,7 @@ class OSFFileSystem(ObjectFileSystem):
                 if item.get("attributes", {}).get("name", "") == filename:
                     upload_url = item.get("links", {}).get("upload")
                     if upload_url:
-                        return upload_url
+                        return str(upload_url)
             raw_next = (data.get("links") or {}).get("next")
             next_url = raw_next if isinstance(raw_next, str) else None
 
@@ -1311,7 +1318,7 @@ class OSFFileSystem(ObjectFileSystem):
                 )
 
             # List source directory contents
-            items = self.ls(path1, detail=True)
+            items: List[Dict[str, Any]] = self.ls(path1, detail=True)  # type: ignore[assignment] # noqa: E501
             logger.debug(f"Recursively copying {len(items)} items from {path1}")
 
             for item in items:
@@ -1726,8 +1733,8 @@ class OSFFileSystem(ObjectFileSystem):
         if info["type"] == "directory":
             if recursive:
                 # List and delete all files in directory
-                items = self.ls(path, detail=True)
-                for item in items:
+                items_d: List[Dict[str, Any]] = self.ls(path, detail=True)  # type: ignore[assignment] # noqa: E501
+                for item in items_d:
                     self.rm(item["name"], recursive=True)
             # OSF directories are virtual - nothing to delete
             return

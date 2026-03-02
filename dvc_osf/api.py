@@ -113,7 +113,7 @@ class OSFAPIClient:
             OSFConnectionError: Network/connection errors
         """
         attempt = 0
-        last_exception = None
+        last_exception: Optional[Exception] = None
 
         while attempt <= self.max_retries:
             try:
@@ -143,7 +143,7 @@ class OSFAPIClient:
 
                 # Calculate backoff delay
                 if isinstance(e, OSFRateLimitError) and e.retry_after:
-                    delay = e.retry_after
+                    delay: float = float(e.retry_after)
                 else:
                     delay = Config.RETRY_BACKOFF**attempt
 
@@ -331,13 +331,13 @@ class OSFAPIClient:
             if "errors" in data and isinstance(data["errors"], list) and data["errors"]:
                 error = data["errors"][0]
                 if "detail" in error:
-                    return error["detail"]
+                    return str(error["detail"])
 
             if "message" in data:
-                return data["message"]
+                return str(data["message"])
 
             if "detail" in data:
-                return data["detail"]
+                return str(data["detail"])
 
         except (ValueError, KeyError, TypeError):
             pass

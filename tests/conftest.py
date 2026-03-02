@@ -18,7 +18,7 @@ def osf_project_id():
 @pytest.fixture
 def mock_osf_client(osf_token):
     """Provide a mock OSF API client for testing."""
-    from dvc_osf.api import OSFClient
+    from dvc_osf.api import OSFAPIClient as OSFClient
 
     client = OSFClient(token=osf_token)
     return client
