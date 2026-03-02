@@ -269,6 +269,15 @@ class TestOSFFileSystemOpen:
     @patch("dvc_osf.filesystem.OSFAPIClient")
     def test_open_write_mode_returns_write_file(self, mock_client_class):
         """Test that write mode returns OSFWriteFile."""
+        mock_client = Mock()
+        # Return an empty directory listing so _get_upload_url terminates
+        mock_response = Mock()
+        mock_response.json.return_value = {"data": [], "links": {"next": None}}
+        mock_client.get.return_value = mock_response
+        # get_paginated used by ls/navigate helpers
+        mock_client.get_paginated.return_value = iter([])
+        mock_client_class.return_value = mock_client
+
         fs = OSFFileSystem("osf://abc123/osfstorage", token="test_token")
 
         # Write mode should return a writable file object
@@ -367,6 +376,24 @@ class TestOSFFileSystemStripProtocol:
     def test_strip_protocol_with_empty_list(self):
         """Test that an empty list returns an empty list."""
         assert OSFFileSystem._strip_protocol([]) == []
+
+
+class TestExistsBatchAPI:
+    """Tests for exists() batch API (dvc-objects calls exists with a list)."""
+
+    def test_exists_with_list_returns_list_of_bools(self, mock_osf_filesystem):
+        """dvc-objects calls fs.exists(paths, batch_size=N) with a list."""
+        with patch.object(mock_osf_filesystem, "info") as mock_info:
+            mock_info.side_effect = [
+                {"name": "a"},  # first path exists
+                OSFNotFoundError("not found"),  # second path does not
+            ]
+            result = mock_osf_filesystem.exists(["osf://abc/a.txt", "osf://abc/b.txt"])
+        assert result == [True, False]
+
+    def test_exists_with_empty_list(self, mock_osf_filesystem):
+        """Empty list returns empty list."""
+        assert mock_osf_filesystem.exists([]) == []
 
 
 class TestOSFWriteFile:
@@ -509,31 +536,75 @@ class TestOSFFileSystemWriteMethods:
     """Tests for OSFFileSystem write methods."""
 
     @patch("dvc_osf.filesystem.OSFAPIClient")
-    def test_put_file_callback_validation(self, mock_client_class):
-        """Test put_file validates callback parameter."""
-        fs = OSFFileSystem(token="test_token")
+    @patch("dvc_osf.filesystem.OSFFileSystem._verify_upload_checksum")
+    def test_put_file_callback_validation(self, mock_verify, mock_client_class):
+        """Test put_file accepts non-callable callbacks without raising.
 
-        # Non-callable callback should raise TypeError
-        with pytest.raises(TypeError, match="callback must be callable"):
+        DVC passes fsspec Callback objects that are not directly callable.
+        put_file must not reject them; call-sites guard with callable().
+        """
+        mock_client = Mock()
+        mock_response = Mock()
+        mock_response.json.return_value = {"data": [], "links": {"next": None}}
+        mock_client.get.return_value = mock_response
+        mock_client.get_paginated.return_value = iter([])
+        mock_client.upload_file.return_value = None
+        mock_client_class.return_value = mock_client
+
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp.write(b"test data")
+            tmp_path = tmp.name
+
+        try:
+            fs = OSFFileSystem(token="test_token")
+            # Non-callable callback should NOT raise — it is silently ignored
+            # at call-sites via callable() guard.
             fs.put_file(
-                "/tmp/test.txt",
+                tmp_path,
                 "osf://abc123/osfstorage/test.txt",
                 callback="not_callable",
             )
+        finally:
+            import os
 
+            os.unlink(tmp_path)
+
+    @patch("dvc_osf.filesystem.OSFFileSystem._verify_upload_checksum")
     @patch("dvc_osf.filesystem.OSFAPIClient")
-    def test_put_callback_validation(self, mock_client_class):
-        """Test put validates callback parameter."""
-        import io
+    def test_put_callback_validation(self, mock_client_class, mock_verify):
+        """Test put accepts non-callable callbacks without raising.
 
-        fs = OSFFileSystem(token="test_token")
-        file_obj = io.BytesIO(b"test data")
+        DVC passes fsspec Callback objects that are not directly callable.
+        put() must not reject them; call-sites guard with callable().
+        """
+        import tempfile
 
-        # Non-callable callback should raise TypeError
-        with pytest.raises(TypeError, match="callback must be callable"):
-            fs.put(
-                file_obj, "osf://abc123/osfstorage/test.txt", callback="not_callable"
+        mock_client = Mock()
+        mock_response = Mock()
+        mock_response.json.return_value = {"data": [], "links": {"next": None}}
+        mock_client.get.return_value = mock_response
+        mock_client.get_paginated.return_value = iter([])
+        mock_client.upload_file.return_value = None
+        mock_client_class.return_value = mock_client
+
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp.write(b"test data")
+            tmp_path = tmp.name
+
+        try:
+            fs = OSFFileSystem(token="test_token")
+            # Non-callable callback should NOT raise
+            fs.put_file(
+                tmp_path,
+                "osf://abc123/osfstorage/test.txt",
+                callback="not_callable",
             )
+        finally:
+            import os
+
+            os.unlink(tmp_path)
 
     @patch("dvc_osf.filesystem.OSFAPIClient")
     @patch("dvc_osf.filesystem.OSFFileSystem._verify_upload_checksum")

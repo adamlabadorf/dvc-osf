@@ -508,7 +508,7 @@ class OSFAPIClient:
             Other OSF exceptions
         """
         # Wrap file object with progress tracking if callback provided
-        if callback and total_size:
+        if callback and callable(callback) and total_size:
             file_data = self._stream_upload(file_obj, callback, total_size)
         else:
             file_data = file_obj

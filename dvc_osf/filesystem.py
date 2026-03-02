@@ -500,6 +500,23 @@ class OSFFileSystem(ObjectFileSystem):
             result["path"] = path
         return result
 
+    @property
+    def fs(self):
+        """Return the underlying fsspec filesystem (dvc-objects ObjectFileSystem API).
+
+        OSFFileSystem is itself the fsspec implementation, so return self.
+        """
+        return self
+
+    @fs.setter
+    def fs(self, value: Any) -> None:
+        """No-op setter — OSFFileSystem is its own fsspec implementation.
+
+        fsspec's AbstractFileSystem.__init__ may attempt to set ``self.fs``
+        during construction; we accept (and discard) the assignment so that
+        our read-only property doesn't raise AttributeError.
+        """
+
     def unstrip_protocol(self, path: str) -> str:
         """
         Reconstruct a full osf:// URL from an internal path.
@@ -575,8 +592,11 @@ class OSFFileSystem(ObjectFileSystem):
             **kwargs: Additional arguments
 
         Returns:
-            True if path exists, False otherwise
+            True if path exists, False otherwise.
+            If path is a list, returns a list of booleans (dvc-objects batch API).
         """
+        if isinstance(path, list):
+            return [self.exists(p) for p in path]
         try:
             self.info(path)
             return True
@@ -599,26 +619,118 @@ class OSFFileSystem(ObjectFileSystem):
         """
         project_id, provider, file_path = self._resolve_path(path)
 
-        # Build API URL
-        api_url = path_to_api_url(project_id, provider, file_path)
+        # Navigate to the directory using IDs (required for nested paths)
+        try:
+            listing_url, _ = self._navigate_to_dir(
+                project_id, provider, file_path, create_missing=False
+            )
+        except OSFNotFoundError:
+            raise FileNotFoundError(f"Directory not found: {path}")
 
-        # Fetch directory listing (paginated)
-        items = []
-        for item in self.client.get_paginated(api_url):
-            items.append(item)
+        # Fetch directory listing (paginated) using the ID-based URL
+        items = list(self.client.get_paginated(listing_url))
 
         if not detail:
-            # Return just paths/names
             return [
                 self._build_path(project_id, provider, file_path, item)
                 for item in items
             ]
         else:
-            # Return detailed metadata
             return [
                 self._parse_metadata(project_id, provider, file_path, item)
                 for item in items
             ]
+
+    def find(
+        self,
+        path: str,
+        maxdepth: Optional[int] = None,
+        withdirs: bool = False,
+        detail: bool = False,
+        prefix: Union[str, bool] = "",
+        **kwargs: Any,
+    ) -> Union[List[str], List[Dict]]:
+        """List all files under *path*, optionally filtered by a name prefix.
+
+        ``dvc_objects.fs.base.ObjectFileSystem.find`` calls this method with
+        ``prefix`` set to a **string** (e.g. ``'0'``) expecting only entries
+        whose name starts with that string.  fsspec's default ``find()``
+        treats ``prefix`` as a boolean and recurses up the path hierarchy
+        until it produces an empty path — crashing with IndexError.  We
+        override here to handle both boolean and string prefix values.
+
+        Args:
+            path: Directory path to list (osf:// or stripped form)
+            maxdepth: Maximum recursion depth (None = unlimited)
+            withdirs: Include directories in results
+            detail: If True return dicts, otherwise return path strings
+            prefix: If a non-empty string, only return entries whose name
+                starts with that value.  Boolean True/False is treated as
+                no prefix filter (fsspec compatibility).
+        """
+        try:
+            project_id, provider, dir_path = self._resolve_path(path)
+        except Exception:
+            return []
+
+        # Navigate to the target directory using IDs
+        try:
+            listing_url, _ = self._navigate_to_dir(
+                project_id, provider, dir_path, create_missing=False
+            )
+        except OSFNotFoundError:
+            return []
+
+        # Normalise prefix: treat booleans as "no filter"
+        name_prefix: str = prefix if isinstance(prefix, str) else ""
+
+        results: List = []
+
+        def _collect(listing_url: str, current_dir: str, depth: int) -> None:
+            next_url: Optional[str] = listing_url
+            while next_url and isinstance(next_url, str):
+                response = self.client.get(next_url)
+                data = response.json()
+                for item in data.get("data", []):
+                    attrs = item.get("attributes", {})
+                    name = attrs.get("name", "")
+                    kind = attrs.get("kind", "")
+
+                    # Apply name prefix filter only at the immediate listing level
+                    if name_prefix and not name.startswith(name_prefix):
+                        continue
+
+                    item_dir = f"{current_dir}/{name}".lstrip("/")
+                    full_path = serialize_path(project_id, provider, item_dir)
+
+                    if kind == "file":
+                        if detail:
+                            results.append(
+                                self._parse_metadata(
+                                    project_id, provider, current_dir, item
+                                )
+                            )
+                        else:
+                            results.append(full_path)
+                    elif kind == "folder":
+                        if withdirs:
+                            results.append(full_path)
+                        # Recurse unless maxdepth reached
+                        if maxdepth is None or depth < maxdepth:
+                            sub_listing = (
+                                item.get("relationships", {})
+                                .get("files", {})
+                                .get("links", {})
+                                .get("related", {})
+                                .get("href")
+                            )
+                            if sub_listing:
+                                _collect(sub_listing, item_dir, depth + 1)
+
+                next_url = data.get("links", {}).get("next")
+
+        _collect(listing_url, dir_path, 1)
+        return results
 
     def _build_path(
         self, project_id: str, provider: str, parent_path: str, item: Dict[str, Any]
@@ -724,15 +836,21 @@ class OSFFileSystem(ObjectFileSystem):
                 "checksum": None,
             }
 
-        # Need to search for file by listing parent directory
-        # OSF API doesn't support direct file lookup by path
+        # Need to search for file by listing parent directory.
+        # OSF uses internal IDs for nested paths, so we navigate using
+        # _navigate_to_dir instead of constructing the URL by string concatenation.
         parent_path = get_directory(file_path)
         filename = get_filename(file_path)
 
-        # List parent directory, following pagination
-        parent_api_url = path_to_api_url(project_id, provider, parent_path)
-        next_url = parent_api_url
-        while next_url:
+        try:
+            listing_url, _ = self._navigate_to_dir(
+                project_id, provider, parent_path, create_missing=False
+            )
+        except OSFNotFoundError:
+            raise OSFNotFoundError(f"File not found: {path}")
+
+        next_url: Optional[str] = listing_url
+        while next_url and isinstance(next_url, str):
             response = self.client.get(next_url)
             data = response.json()
 
@@ -797,16 +915,21 @@ class OSFFileSystem(ObjectFileSystem):
         parent_path = get_directory(file_path)
         filename = get_filename(file_path)
 
-        # List parent directory
-        parent_api_url = path_to_api_url(project_id, provider, parent_path)
-        response = self.client.get(parent_api_url)
-        data = response.json()
+        # Navigate to parent directory using IDs (handles nested paths + pagination)
+        try:
+            listing_url, _ = self._navigate_to_dir(
+                project_id, provider, parent_path, create_missing=False
+            )
+        except OSFNotFoundError:
+            raise OSFNotFoundError(f"Download URL not found for path: {path}")
 
-        # Find file and get download URL
+        # Search the listing for the file, following pagination
         download_url = None
-        if "data" in data:
-            items = data["data"]
-            for item in items:
+        next_url: Optional[str] = listing_url
+        while next_url and isinstance(next_url, str) and download_url is None:
+            response = self.client.get(next_url)
+            data = response.json()
+            for item in data.get("data", []):
                 item_name = item.get("attributes", {}).get("name", "")
                 if item_name == filename:
                     links = item.get("links", {})
@@ -814,6 +937,7 @@ class OSFFileSystem(ObjectFileSystem):
                     # The 'download' link goes to osf.io which doesn't support API auth
                     download_url = links.get("upload") or links.get("move")
                     break
+            next_url = data.get("links", {}).get("next")
 
         if not download_url:
             raise OSFNotFoundError(f"Download URL not found for path: {path}")
@@ -891,10 +1015,6 @@ class OSFFileSystem(ObjectFileSystem):
             OSFQuotaExceededError: If storage quota exceeded
             Other OSF exceptions
         """
-        # Validate callback if provided
-        if callback is not None and not callable(callback):
-            raise TypeError("callback must be callable")
-
         # Get file size to determine upload strategy
         file_size = os.path.getsize(lpath)
         upload_strategy = determine_upload_strategy(
@@ -918,7 +1038,7 @@ class OSFFileSystem(ObjectFileSystem):
         """Upload a small file using single PUT request."""
         project_id, provider, file_path = self._resolve_path(rpath)
 
-        # Get upload URL
+        # Get upload URL (creates parent directories as needed)
         upload_url = self._get_upload_url(project_id, provider, file_path)
 
         # Upload file
@@ -926,8 +1046,9 @@ class OSFFileSystem(ObjectFileSystem):
         with open(lpath, "rb") as f:
             self.client.upload_file(upload_url, f, callback, file_size)
 
-        # Invoke final callback if provided
-        if callback:
+        # Invoke final callback if provided (only if directly callable;
+        # DVC may pass fsspec Callback objects which are not callable)
+        if callback and callable(callback):
             try:
                 callback(file_size, file_size)
             except Exception:
@@ -946,7 +1067,7 @@ class OSFFileSystem(ObjectFileSystem):
         """
         project_id, provider, file_path = self._resolve_path(rpath)
 
-        # Get upload URL
+        # Get upload URL (creates parent directories as needed)
         upload_url = self._get_upload_url(project_id, provider, file_path)
 
         # Get file size
@@ -956,53 +1077,119 @@ class OSFFileSystem(ObjectFileSystem):
         with open(lpath, "rb") as f:
             self.client.upload_file(upload_url, f, callback, file_size)
 
-    def _get_upload_url(self, project_id: str, provider: str, file_path: str) -> str:
-        """Get upload URL for a file (existing or new).
+    def _navigate_to_dir(
+        self,
+        project_id: str,
+        provider: str,
+        dir_path: str,
+        create_missing: bool = False,
+    ) -> tuple:
+        """Walk the directory tree using OSF file IDs and return URLs for the target dir.
 
-        Follows OSF API pagination to ensure all files in the parent directory
-        are checked before falling back to the creation URL.
+        OSF uses internal file IDs in API and WaterButler URLs for all
+        directories below the root — path-constructed URLs only work at root
+        level.  This method navigates each path component in turn, following
+        ``relationships.files.links.related.href`` from listing responses.
+
+        Args:
+            project_id: OSF project ID
+            provider: Storage provider (e.g. osfstorage)
+            dir_path: Target directory path (e.g. ``files/md5/37``)
+            create_missing: If True, create any missing folders along the way
+
+        Returns:
+            ``(listing_url, waterbutler_url)`` for the target directory.
+            ``listing_url`` is the OSF API URL to list its contents.
+            ``waterbutler_url`` is the WaterButler URL base for uploads/subfolder creation.
+        """
+        parts = [p for p in dir_path.strip("/").split("/") if p]
+        root_listing_url = path_to_api_url(project_id, provider, "")
+        root_wb_url = (
+            f"https://files.osf.io/v1/resources/{project_id}/providers/{provider}/"
+        )
+
+        current_listing_url: str = root_listing_url
+        current_wb_url: str = root_wb_url
+
+        for part in parts:
+            # Search current directory for this component (follow pagination)
+            next_url: Optional[str] = current_listing_url
+            found_item = None
+            while next_url and isinstance(next_url, str) and found_item is None:
+                response = self.client.get(next_url)
+                data = response.json()
+                for item in data.get("data", []):
+                    if item.get("attributes", {}).get("name") == part:
+                        found_item = item
+                        break
+                next_url = data.get("links", {}).get("next")
+
+            if found_item is not None:
+                # Navigate into existing folder using IDs from the response
+                listing_href = (
+                    found_item.get("relationships", {})
+                    .get("files", {})
+                    .get("links", {})
+                    .get("related", {})
+                    .get("href")
+                )
+                wb_href = found_item.get("links", {}).get("upload")
+                # Strip query params — WaterButler upload URLs sometimes include
+                # ?kind=file which would corrupt subsequent folder-creation URLs
+                if wb_href:
+                    wb_href = wb_href.split("?")[0].rstrip("/") + "/"
+                current_listing_url = listing_href or current_listing_url
+                current_wb_url = wb_href or current_wb_url
+            elif create_missing:
+                # Create the missing folder then navigate into it
+                create_url = f"{current_wb_url.rstrip('/')}/?kind=folder&name={part}"
+                resp = self.client._request("PUT", create_url)
+                new_item = resp.json().get("data", {})
+                listing_href = (
+                    new_item.get("relationships", {})
+                    .get("files", {})
+                    .get("links", {})
+                    .get("related", {})
+                    .get("href")
+                )
+                wb_href = new_item.get("links", {}).get("upload")
+                if wb_href:
+                    wb_href = wb_href.split("?")[0].rstrip("/") + "/"
+                current_listing_url = listing_href or current_listing_url
+                current_wb_url = wb_href or current_wb_url
+            else:
+                raise OSFNotFoundError(f"Directory not found: {dir_path}")
+
+        return current_listing_url, current_wb_url
+
+    def _get_upload_url(self, project_id: str, provider: str, file_path: str) -> str:
+        """Get WaterButler upload URL for a file (existing update URL or new-file URL).
+
+        Navigates to the parent directory using OSF file IDs, checks whether
+        the file already exists, and returns the appropriate WaterButler URL.
         """
         parent_path = get_directory(file_path)
         filename = get_filename(file_path)
 
-        # List parent directory to check if file exists, following pagination
-        parent_api_url = path_to_api_url(project_id, provider, parent_path)
-        next_url = parent_api_url
-        try:
-            while next_url:
-                response = self.client.get(next_url)
-                data = response.json()
-
-                # Check if file exists on this page
-                if "data" in data:
-                    for item in data["data"]:
-                        item_name = item.get("attributes", {}).get("name", "")
-                        if item_name == filename:
-                            # File exists — return its update URL from links
-                            links = item.get("links", {})
-                            upload_url = links.get("upload")
-                            if upload_url:
-                                return upload_url
-
-                # Follow next page if available
-                next_url = data.get("links", {}).get("next")
-
-        except OSFNotFoundError:
-            # Parent directory doesn't exist - that's okay for new files
-            # OSF will create directories implicitly when we upload
-            pass
-
-        # File doesn't exist, construct WaterButler upload URL for new files
-        # Format: https://files.osf.io/v1/resources/{project}/providers/{provider}/{path}?kind=file
-        base_url = (
-            f"https://files.osf.io/v1/resources/{project_id}/providers/{provider}"
+        # Navigate to parent directory, creating it if needed; get both URLs in one pass
+        current_listing_url, parent_wb_url = self._navigate_to_dir(
+            project_id, provider, parent_path, create_missing=True
         )
-        if parent_path:
-            waterbutler_url = f"{base_url}/{parent_path}/?kind=file&name={filename}"
-        else:
-            waterbutler_url = f"{base_url}/?kind=file&name={filename}"
 
-        return waterbutler_url
+        next_url: Optional[str] = current_listing_url
+        while next_url and isinstance(next_url, str):
+            response = self.client.get(next_url)
+            data = response.json()
+            for item in (data.get("data") or []):
+                if item.get("attributes", {}).get("name", "") == filename:
+                    upload_url = item.get("links", {}).get("upload")
+                    if upload_url:
+                        return upload_url
+            raw_next = (data.get("links") or {}).get("next")
+            next_url = raw_next if isinstance(raw_next, str) else None
+
+        # File doesn't exist — return new-file creation URL using parent WaterButler URL
+        return f"{parent_wb_url.rstrip('/')}/?kind=file&name={filename}"
 
     def _verify_upload_checksum(self, lpath: str, rpath: str) -> None:
         """Verify uploaded file checksum matches local file."""
@@ -1038,10 +1225,6 @@ class OSFFileSystem(ObjectFileSystem):
             callback: Optional progress callback (bytes_uploaded, total_bytes)
             **kwargs: Additional arguments
         """
-        # Validate callback if provided
-        if callback is not None and not callable(callback):
-            raise TypeError("callback must be callable")
-
         project_id, provider, file_path = self._resolve_path(rpath)
 
         # Get upload URL
@@ -1551,7 +1734,7 @@ class OSFFileSystem(ObjectFileSystem):
         # Get file's delete URL, following pagination
         parent_api_url = path_to_api_url(project_id, provider, parent_path)
         next_url = parent_api_url
-        while next_url:
+        while next_url and isinstance(next_url, str):
             response = self.client.get(next_url)
             data = response.json()
 

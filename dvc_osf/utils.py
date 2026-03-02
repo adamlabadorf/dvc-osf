@@ -160,10 +160,11 @@ def path_to_api_url(
     else:
         encoded_path = ""
 
-    # Build the API URL for files
-    # Format: {base_url}/nodes/{project_id}/files/{provider}/{path}
+    # Build the API URL for files/directories.
+    # OSF requires a trailing slash on directory paths to return a folder
+    # listing; without it the API returns 404.
     if encoded_path:
-        return f"{base_url}/nodes/{project_id}/files/{provider}/{encoded_path}"
+        return f"{base_url}/nodes/{project_id}/files/{provider}/{encoded_path}/"
     else:
         return f"{base_url}/nodes/{project_id}/files/{provider}/"
 
