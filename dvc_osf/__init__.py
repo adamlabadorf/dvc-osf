@@ -1,6 +1,6 @@
 """DVC-OSF: Open Science Framework plugin for DVC."""
 
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 
 from dvc_osf.exceptions import OSFException
 from dvc_osf.filesystem import OSFFileSystem

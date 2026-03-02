@@ -2,6 +2,15 @@
 
 All notable changes to dvc-osf are documented here.
 
+## [1.0.2] - 2026-03-02
+
+### Fixed
+- Resolved all mypy type errors in source package
+- Added mypy to pre-commit hooks (scoped to `dvc_osf/`, using `dvc-objects` in isolated env)
+- Set `warn_unused_ignores = false` to handle cross-environment differences in dvc-objects stub availability
+- Added `.flake8` config to align line length with black (88 chars)
+- Fixed `OSFClient` → `OSFAPIClient` rename in test conftest
+
 ## [1.0.1] - 2026-03-02
 
 ### Fixed
