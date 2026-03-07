@@ -2,6 +2,14 @@
 
 All notable changes to dvc-osf are documented here.
 
+## [1.0.3] - 2026-03-07
+
+### Fixed
+- `_get_kwargs_from_urls()` no longer returns `path` in its result dict.
+  DVC calls `Remote(name, fs_path, fs, **config)` with `fs_path` extracted
+  separately via `_strip_protocol()`; having `path` in `**config` as well
+  caused `TypeError: Remote.__init__() got multiple values for argument 'path'`
+
 ## [1.0.2] - 2026-03-02
 
 ### Fixed

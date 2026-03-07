@@ -501,16 +501,15 @@ class OSFFileSystem(ObjectFileSystem):
         Returns:
             Dict with project_id, provider, and optionally path
         """
-        project_id, provider, path = parse_osf_url(urlpath)
-        result: Dict[str, Any] = {
+        project_id, provider, _ = parse_osf_url(urlpath)
+        # Do NOT include 'path' here — DVC extracts fs_path separately via
+        # _strip_protocol() and passes it as a positional arg to Remote.__init__.
+        # Returning 'path' in this dict causes a "multiple values for argument
+        # 'path'" TypeError when DVC spreads **config over the Remote call.
+        return {
             "project_id": project_id,
             "provider": provider,
         }
-        # Only include path if non-empty
-        path = path.strip("/") if path else ""
-        if path:
-            result["path"] = path
-        return result
 
     @property
     def fs(self):
