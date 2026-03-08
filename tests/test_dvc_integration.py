@@ -77,13 +77,15 @@ class TestGetKwargsFromUrls:
     """Tests for _get_kwargs_from_urls static method."""
 
     def test_full_url_with_path(self):
+        # 'path' is intentionally excluded — DVC extracts fs_path separately
+        # via _strip_protocol() and passes it positionally to Remote.__init__.
+        # Returning 'path' here caused TypeError (multiple values for 'path').
         result = OSFFileSystem._get_kwargs_from_urls(
             "osf://abc123/osfstorage/data/files"
         )
         assert result == {
             "project_id": "abc123",
             "provider": "osfstorage",
-            "path": "data/files",
         }
 
     def test_url_without_path(self):
@@ -95,13 +97,13 @@ class TestGetKwargsFromUrls:
         assert result == {"project_id": "abc123", "provider": "osfstorage"}
 
     def test_url_with_deep_path(self):
+        # 'path' excluded for same reason as test_full_url_with_path above.
         result = OSFFileSystem._get_kwargs_from_urls(
             "osf://abc123/osfstorage/a/b/c/d.csv"
         )
         assert result == {
             "project_id": "abc123",
             "provider": "osfstorage",
-            "path": "a/b/c/d.csv",
         }
 
     def test_invalid_url_raises(self):
