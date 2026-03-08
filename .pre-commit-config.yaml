@@ -39,3 +39,12 @@ repos:
         # Only type-check source package; test files use intentional wrong-type
         # calls to exercise error-handling paths.
         files: ^dvc_osf/
+
+  - repo: local
+    hooks:
+      - id: unit-tests
+        name: unit tests
+        entry: uv run pytest tests/test_filesystem.py tests/test_utils.py tests/test_dvc_integration.py -q --no-cov
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
