@@ -507,21 +507,37 @@ class OSFAPIClient:
             OSFVersionConflictError: Version conflict
             Other OSF exceptions
         """
-        # Wrap file object with progress tracking if callback provided
-        if callback and callable(callback) and total_size:
-            file_data = self._stream_upload(file_obj, callback, total_size)
-        else:
-            file_data = file_obj
-
         # Use upload_timeout for file uploads
         headers = {"Content-Type": "application/octet-stream"}
 
-        return self._request(
-            "PUT",
-            url,
-            data=file_data,
-            headers=headers,
-        )
+        # Upload directly — do NOT go through _request()'s retry loop.
+        # _request retries by replaying the same request, but a generator or
+        # already-consumed file object yields 0 bytes on re-read, producing an
+        # empty file on OSF (checksum d41d8cd98f00b204e9800998ecf8427e).
+        # WaterButler uploads are idempotent at the caller level (put_file is
+        # called once per file), so a single attempt with the raw timeout is safe.
+        start_pos = file_obj.tell() if hasattr(file_obj, "tell") else None
+
+        def _attempt() -> requests.Response:
+            # Rewind file between attempts so body is never empty on retry
+            if start_pos is not None and hasattr(file_obj, "seek"):
+                file_obj.seek(start_pos)
+
+            if callback and callable(callback) and total_size:
+                file_data: Any = self._stream_upload(file_obj, callback, total_size)
+            else:
+                file_data = file_obj
+
+            return self.session.put(
+                url,
+                data=file_data,
+                headers=headers,
+                timeout=self.upload_timeout,
+            )
+
+        response = _attempt()
+        self._handle_response(response)
+        return response
 
     def upload_chunk(
         self,

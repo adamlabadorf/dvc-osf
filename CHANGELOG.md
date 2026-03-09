@@ -2,6 +2,15 @@
 
 All notable changes to dvc-osf are documented here.
 
+## [1.0.4] - 2026-03-09
+
+### Fixed
+- Checksum mismatch after upload (got `d41d8cd98f00b204e9800998ecf8427e`, the
+  empty-file MD5): `upload_file()` was passing a generator from `_stream_upload`
+  through `_request()`'s retry loop. On retry the generator was already exhausted,
+  so an empty body was sent to WaterButler. Fix: bypass `_request()` for uploads
+  and rewind the file object between attempts so every attempt sends the full body.
+
 ## [1.0.3] - 2026-03-07 / 2026-03-08
 
 ### Fixed
