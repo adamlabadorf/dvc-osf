@@ -1215,6 +1215,9 @@ class OSFFileSystem(ObjectFileSystem):
                     wb_href = wb_href.split("?")[0].rstrip("/") + "/"
 
                 if not listing_href and wb_href:
+                    # Fallback: derive from WaterButler upload URL.
+                    # WB folder URL: .../providers/{pv}/{id}/
+                    # → OSF API listing: .../files/{pv}/{id}/
                     _m = re.search(
                         r"/providers/[^/]+/(.+?)/?$",
                         wb_href.rstrip("/"),
@@ -1227,12 +1230,17 @@ class OSFFileSystem(ObjectFileSystem):
                                 f"/files/{provider}/{_fid}/"
                             )
 
-                if listing_href is None:
-                    raise OSFNotFoundError(
-                        f"Cannot determine listing URL for path: {dir_path}"
-                    )
+                if not listing_href:
+                    # Last resort: attributes.path (human-readable or ID).
+                    # Better than silently reusing the parent listing URL.
+                    _ap = found_item.get("attributes", {}).get("path", "").strip("/")
+                    if _ap:
+                        listing_href = (
+                            f"https://api.osf.io/v2/nodes/{project_id}"
+                            f"/files/{provider}/{_ap}/"
+                        )
 
-                current_listing_url = listing_href
+                current_listing_url = listing_href or current_listing_url
                 current_wb_url = wb_href or current_wb_url
             elif create_missing:
                 # Create the missing folder then navigate into it.
