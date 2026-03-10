@@ -4,6 +4,7 @@ import hashlib
 import io
 import logging
 import os
+import re
 import tempfile
 from typing import Any, BinaryIO, Callable, Dict, List, Optional, Union
 
@@ -33,6 +34,8 @@ from .utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+EMPTY_FILE_MD5 = "d41d8cd98f00b204e9800998ecf8427e"
 
 
 class OSFFile(io.IOBase):
@@ -1036,26 +1039,45 @@ class OSFFileSystem(ObjectFileSystem):
 
         try:
             if upload_strategy == "single":
-                self._put_file_simple(lpath, rpath, callback)
+                remote_md5 = self._put_file_simple(lpath, rpath, callback)
             else:
-                self._put_file_chunked(lpath, rpath, callback)
+                remote_md5 = self._put_file_chunked(lpath, rpath, callback)
         except OSFVersionConflictError:
-            # 409: a file with this name already exists at the target location.
+            # 409: file already exists at target location.
             # For DVC's content-addressed cache, filename == MD5, so same name
-            # means same content.  Verify checksum and treat as success.
-            self._verify_upload_checksum(lpath, rpath)
+            # means same content — treat as success without re-verifying.
             return
 
-        # Verify checksum after upload
-        self._verify_upload_checksum(lpath, rpath)
+        # Verify checksum using MD5 returned directly in the upload response.
+        # This avoids a second OSF API round-trip (info() → _navigate_to_dir)
+        # which is unreliable for freshly created WaterButler paths whose
+        # parent directories may not yet appear in the OSF listing API.
+        if remote_md5:
+            with open(lpath, "rb") as f:
+                local_md5 = compute_upload_checksum(f)
+            if local_md5 != remote_md5:
+                raise OSFIntegrityError(
+                    f"Checksum mismatch after upload for {rpath}: "
+                    f"expected {local_md5}, got {remote_md5}. "
+                    f"If remote is {EMPTY_FILE_MD5!r} the upload body was empty.",
+                    expected_checksum=local_md5,
+                    actual_checksum=remote_md5,
+                )
+        else:
+            # Response did not include MD5 — fall back to info()-based check.
+            self._verify_upload_checksum(lpath, rpath)
 
     def _put_file_simple(
         self,
         lpath: str,
         rpath: str,
         callback: Optional[Callable[[int, int], None]] = None,
-    ) -> None:
-        """Upload a small file using single PUT request."""
+    ) -> Optional[str]:
+        """Upload a small file using single PUT request.
+
+        Returns:
+            MD5 checksum from upload response, or None if not available.
+        """
         project_id, provider, file_path = self._resolve_path(rpath)
 
         # Get upload URL (creates parent directories as needed)
@@ -1064,7 +1086,7 @@ class OSFFileSystem(ObjectFileSystem):
         # Upload file
         file_size = os.path.getsize(lpath)
         with open(lpath, "rb") as f:
-            self.client.upload_file(upload_url, f, callback, file_size)
+            response = self.client.upload_file(upload_url, f, callback, file_size)
 
         # Invoke final callback if provided (only if directly callable;
         # DVC may pass fsspec Callback objects which are not callable)
@@ -1074,16 +1096,31 @@ class OSFFileSystem(ObjectFileSystem):
             except Exception:
                 pass
 
+        # Return MD5 from upload response to avoid a second API round-trip.
+        try:
+            return (
+                str(
+                    response.json().get("data", {}).get("attributes", {}).get("md5")
+                    or ""
+                )
+                or None
+            )
+        except Exception:
+            return None
+
     def _put_file_chunked(
         self,
         lpath: str,
         rpath: str,
         callback: Optional[Callable[[int, int], None]] = None,
-    ) -> None:
+    ) -> Optional[str]:
         """Upload a large file using streaming PUT (not multi-request chunking).
 
         Note: OSF doesn't support true multi-request chunked uploads. Instead,
         we stream the file in a single PUT request for memory efficiency.
+
+        Returns:
+            MD5 checksum from upload response, or None if not available.
         """
         project_id, provider, file_path = self._resolve_path(rpath)
 
@@ -1095,7 +1132,18 @@ class OSFFileSystem(ObjectFileSystem):
 
         # Upload file with streaming for memory efficiency
         with open(lpath, "rb") as f:
-            self.client.upload_file(upload_url, f, callback, file_size)
+            response = self.client.upload_file(upload_url, f, callback, file_size)
+
+        try:
+            return (
+                str(
+                    response.json().get("data", {}).get("attributes", {}).get("md5")
+                    or ""
+                )
+                or None
+            )
+        except Exception:
+            return None
 
     def _navigate_to_dir(
         self,
@@ -1146,34 +1194,45 @@ class OSFFileSystem(ObjectFileSystem):
 
             if found_item is not None:
                 # Navigate into the existing folder.
+                #
                 # Listing URL derivation priority:
-                # 1. attributes.path → construct OSF API listing URL.  This
-                #    field is always present and works for both root-level
-                #    (human-readable path) and nested (internal 24-char ID)
-                #    items, regardless of whether the parent listing was
-                #    fetched via a path-based or ID-based URL.
-                # 2. relationships.files.links.related.href — standard but
-                #    absent when items are returned by ID-based listing URLs.
-                # 3. Keep current_listing_url as last-resort fallback.
+                # 1. relationships.files.links.related.href — standard OSF API.
+                #    Present in root/path-based listings; gives ID-based URL.
+                # 2. Extract folder ID from WaterButler upload URL.
+                #    links.upload for a folder is its own WB URL:
+                #    files.osf.io/v1/resources/{p}/providers/{pv}/{id}/
+                #    → api.osf.io/v2/nodes/{p}/files/{pv}/{id}/
+                # 3. Raise — never silently keep the parent URL (old bug).
+                listing_href: Optional[str] = (
+                    found_item.get("relationships", {})
+                    .get("files", {})
+                    .get("links", {})
+                    .get("related", {})
+                    .get("href")
+                )
                 wb_href = found_item.get("links", {}).get("upload")
                 if wb_href:
                     wb_href = wb_href.split("?")[0].rstrip("/") + "/"
 
-                attr_path = found_item.get("attributes", {}).get("path", "").strip("/")
-                if attr_path:
-                    listing_href: Optional[str] = (
-                        f"https://api.osf.io/v2/nodes/{project_id}"
-                        f"/files/{provider}/{attr_path}/"
+                if not listing_href and wb_href:
+                    _m = re.search(
+                        r"/providers/[^/]+/(.+?)/?$",
+                        wb_href.rstrip("/"),
                     )
-                else:
-                    listing_href = (
-                        found_item.get("relationships", {})
-                        .get("files", {})
-                        .get("links", {})
-                        .get("related", {})
-                        .get("href")
+                    if _m:
+                        _fid = _m.group(1).strip("/")
+                        if _fid:
+                            listing_href = (
+                                f"https://api.osf.io/v2/nodes/{project_id}"
+                                f"/files/{provider}/{_fid}/"
+                            )
+
+                if listing_href is None:
+                    raise OSFNotFoundError(
+                        f"Cannot determine listing URL for path: {dir_path}"
                     )
-                current_listing_url = listing_href or current_listing_url
+
+                current_listing_url = listing_href
                 current_wb_url = wb_href or current_wb_url
             elif create_missing:
                 # Create the missing folder then navigate into it.
