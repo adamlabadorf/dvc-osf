@@ -4,7 +4,6 @@ import hashlib
 import io
 import logging
 import os
-import re
 import tempfile
 from typing import Any, BinaryIO, Callable, Dict, List, Optional, Union
 
@@ -1146,37 +1145,26 @@ class OSFFileSystem(ObjectFileSystem):
                 next_url = data.get("links", {}).get("next")
 
             if found_item is not None:
-                # Navigate into existing folder using IDs from the response.
-                # Priority for listing URL:
-                # 1. Derive from WaterButler upload URL (most reliable — always
-                #    contains the internal folder ID regardless of API response
-                #    format, which varies between root and nested listings).
-                # 2. relationships.files.links.related.href (standard OSF API).
-                # 3. Keep current (fallback, should not happen).
+                # Navigate into the existing folder.
+                # Listing URL derivation priority:
+                # 1. attributes.path → construct OSF API listing URL.  This
+                #    field is always present and works for both root-level
+                #    (human-readable path) and nested (internal 24-char ID)
+                #    items, regardless of whether the parent listing was
+                #    fetched via a path-based or ID-based URL.
+                # 2. relationships.files.links.related.href — standard but
+                #    absent when items are returned by ID-based listing URLs.
+                # 3. Keep current_listing_url as last-resort fallback.
                 wb_href = found_item.get("links", {}).get("upload")
                 if wb_href:
                     wb_href = wb_href.split("?")[0].rstrip("/") + "/"
-                    # Convert WaterButler URL → OSF API listing URL:
-                    # files.osf.io/v1/resources/…/providers/…/{id}/
-                    # → api.osf.io/v2/nodes/…/files/…/{id}/
-                    _m = re.search(
-                        r"/providers/[^/]+/(.+?)/?$",
-                        wb_href.rstrip("/"),
+
+                attr_path = found_item.get("attributes", {}).get("path", "").strip("/")
+                if attr_path:
+                    listing_href: Optional[str] = (
+                        f"https://api.osf.io/v2/nodes/{project_id}"
+                        f"/files/{provider}/{attr_path}/"
                     )
-                    if _m:
-                        _folder_id = _m.group(1).strip("/")
-                        listing_href: Optional[str] = (
-                            f"https://api.osf.io/v2/nodes/{project_id}"
-                            f"/files/{provider}/{_folder_id}/"
-                        )
-                    else:
-                        listing_href = (
-                            found_item.get("relationships", {})
-                            .get("files", {})
-                            .get("links", {})
-                            .get("related", {})
-                            .get("href")
-                        )
                 else:
                     listing_href = (
                         found_item.get("relationships", {})
@@ -1188,10 +1176,52 @@ class OSFFileSystem(ObjectFileSystem):
                 current_listing_url = listing_href or current_listing_url
                 current_wb_url = wb_href or current_wb_url
             elif create_missing:
-                # Create the missing folder then navigate into it
+                # Create the missing folder then navigate into it.
+                # If a 409 is returned the folder already exists — re-list the
+                # current directory to find it and navigate in normally.
                 create_url = f"{current_wb_url.rstrip('/')}/?kind=folder&name={part}"
-                resp = self.client._request("PUT", create_url)
-                new_item = resp.json().get("data", {})
+                try:
+                    resp = self.client._request("PUT", create_url)
+                    new_item = resp.json().get("data", {})
+                except OSFVersionConflictError:
+                    # Folder exists; find it via current listing and fall
+                    # through to the found_item navigation logic.
+                    refresh_url: Optional[str] = current_listing_url
+                    found_item = None
+                    while refresh_url and found_item is None:
+                        r = self.client.get(refresh_url)
+                        d = r.json()
+                        for it in d.get("data", []):
+                            if it.get("attributes", {}).get("name") == part:
+                                found_item = it
+                                break
+                        refresh_url = d.get("links", {}).get("next")
+                    if found_item is None:
+                        raise OSFNotFoundError(
+                            f"Folder '{part}' not found after 409: {dir_path}"
+                        )
+                    wb_href = found_item.get("links", {}).get("upload")
+                    if wb_href:
+                        wb_href = wb_href.split("?")[0].rstrip("/") + "/"
+                    attr_path = (
+                        found_item.get("attributes", {}).get("path", "").strip("/")
+                    )
+                    if attr_path:
+                        listing_href = (
+                            f"https://api.osf.io/v2/nodes/{project_id}"
+                            f"/files/{provider}/{attr_path}/"
+                        )
+                    else:
+                        listing_href = (
+                            found_item.get("relationships", {})
+                            .get("files", {})
+                            .get("links", {})
+                            .get("related", {})
+                            .get("href")
+                        )
+                    current_listing_url = listing_href or current_listing_url
+                    current_wb_url = wb_href or current_wb_url
+                    continue
 
                 wb_href = new_item.get("links", {}).get("upload")
                 if wb_href:

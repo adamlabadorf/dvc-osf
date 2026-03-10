@@ -607,7 +607,7 @@ class TestDvcGc:
         run("git", "add", ".", cwd=str(repo))
         run("git", "commit", "-m", "add keeps", cwd=str(repo))
         run("dvc", "push", cwd=str(repo))
-        run("dvc", "gc", "-r", "myosf", "--force", cwd=str(repo))
+        run("dvc", "gc", "-r", "myosf", "-w", "--force", cwd=str(repo))
 
         for fname, dvc_md5 in files.items():
             remote_path = f"{remote_url}/files/md5/{dvc_md5[:2]}/{dvc_md5[2:]}"
