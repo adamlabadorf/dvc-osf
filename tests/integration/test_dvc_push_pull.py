@@ -48,6 +48,9 @@ def run(
 ) -> subprocess.CompletedProcess:
     """Run a CLI command, returning CompletedProcess. Raises on non-zero by default."""
     cmd_env = os.environ.copy()
+    # Propagate OSF token so commands like `dvc ls-url` that don't read DVC
+    # remote config can still authenticate.
+    osf_token = os.environ.get("OSF_TEST_TOKEN", "")
     cmd_env.update(
         {
             "GIT_AUTHOR_NAME": "Test",
@@ -56,6 +59,7 @@ def run(
             "GIT_COMMITTER_EMAIL": "test@test.com",
             "DVC_TEST": "true",
             "DVC_NO_ANALYTICS": "1",
+            **({"OSF_TOKEN": osf_token} if osf_token else {}),
         }
     )
     if env:
@@ -511,12 +515,9 @@ class TestDvcStatus:
         run("dvc", "push", cwd=str(repo))
 
         result = run("dvc", "status", "-r", "myosf", cwd=str(repo))
-        # Clean status: either empty output or explicit "Data and pipelines are up to date"
-        clean = (
-            result.stdout.strip() == ""
-            or "up to date" in result.stdout.lower()
-            or "0 file" in result.stdout
-        )
+        # Clean status varies by DVC version; treat any "in sync"/"up to date" message as clean
+        out = result.stdout.strip().lower()
+        clean = out == "" or "up to date" in out or "in sync" in out or "0 file" in out
         assert clean, f"Expected clean remote status, got:\n{result.stdout}"
 
     def test_status_detects_new_unpushed_file(self, dvc_repo):
@@ -580,7 +581,8 @@ class TestDvcGc:
         run("git", "commit", "-m", "remove gc_target from tracking", cwd=str(repo))
 
         # Run gc
-        run("dvc", "gc", "-r", "myosf", "--force", cwd=str(repo))
+        # DVC requires a revision/workspace scope for GC; `-w` is the most conservative.
+        run("dvc", "gc", "-r", "myosf", "-w", "--force", cwd=str(repo))
 
         remote_a = f"{remote_url}/files/md5/{md5_a[:2]}/{md5_a[2:]}"
         remote_b = f"{remote_url}/files/md5/{md5_b[:2]}/{md5_b[2:]}"

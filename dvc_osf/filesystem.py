@@ -4,6 +4,7 @@ import hashlib
 import io
 import logging
 import os
+import re
 import tempfile
 from typing import Any, BinaryIO, Callable, Dict, List, Optional, Union
 
@@ -18,6 +19,7 @@ from .exceptions import (
     OSFIntegrityError,
     OSFNotFoundError,
     OSFOperationNotSupportedError,
+    OSFVersionConflictError,
 )
 from .utils import (
     compute_upload_checksum,
@@ -1033,10 +1035,17 @@ class OSFFileSystem(ObjectFileSystem):
             file_size, Config.OSF_UPLOAD_CHUNK_SIZE
         )
 
-        if upload_strategy == "single":
-            self._put_file_simple(lpath, rpath, callback)
-        else:
-            self._put_file_chunked(lpath, rpath, callback)
+        try:
+            if upload_strategy == "single":
+                self._put_file_simple(lpath, rpath, callback)
+            else:
+                self._put_file_chunked(lpath, rpath, callback)
+        except OSFVersionConflictError:
+            # 409: a file with this name already exists at the target location.
+            # For DVC's content-addressed cache, filename == MD5, so same name
+            # means same content.  Verify checksum and treat as success.
+            self._verify_upload_checksum(lpath, rpath)
+            return
 
         # Verify checksum after upload
         self._verify_upload_checksum(lpath, rpath)
@@ -1137,19 +1146,45 @@ class OSFFileSystem(ObjectFileSystem):
                 next_url = data.get("links", {}).get("next")
 
             if found_item is not None:
-                # Navigate into existing folder using IDs from the response
-                listing_href = (
-                    found_item.get("relationships", {})
-                    .get("files", {})
-                    .get("links", {})
-                    .get("related", {})
-                    .get("href")
-                )
+                # Navigate into existing folder using IDs from the response.
+                # Priority for listing URL:
+                # 1. Derive from WaterButler upload URL (most reliable — always
+                #    contains the internal folder ID regardless of API response
+                #    format, which varies between root and nested listings).
+                # 2. relationships.files.links.related.href (standard OSF API).
+                # 3. Keep current (fallback, should not happen).
                 wb_href = found_item.get("links", {}).get("upload")
-                # Strip query params — WaterButler upload URLs sometimes include
-                # ?kind=file which would corrupt subsequent folder-creation URLs
                 if wb_href:
                     wb_href = wb_href.split("?")[0].rstrip("/") + "/"
+                    # Convert WaterButler URL → OSF API listing URL:
+                    # files.osf.io/v1/resources/…/providers/…/{id}/
+                    # → api.osf.io/v2/nodes/…/files/…/{id}/
+                    _m = re.search(
+                        r"/providers/[^/]+/(.+?)/?$",
+                        wb_href.rstrip("/"),
+                    )
+                    if _m:
+                        _folder_id = _m.group(1).strip("/")
+                        listing_href: Optional[str] = (
+                            f"https://api.osf.io/v2/nodes/{project_id}"
+                            f"/files/{provider}/{_folder_id}/"
+                        )
+                    else:
+                        listing_href = (
+                            found_item.get("relationships", {})
+                            .get("files", {})
+                            .get("links", {})
+                            .get("related", {})
+                            .get("href")
+                        )
+                else:
+                    listing_href = (
+                        found_item.get("relationships", {})
+                        .get("files", {})
+                        .get("links", {})
+                        .get("related", {})
+                        .get("href")
+                    )
                 current_listing_url = listing_href or current_listing_url
                 current_wb_url = wb_href or current_wb_url
             elif create_missing:
@@ -1157,16 +1192,24 @@ class OSFFileSystem(ObjectFileSystem):
                 create_url = f"{current_wb_url.rstrip('/')}/?kind=folder&name={part}"
                 resp = self.client._request("PUT", create_url)
                 new_item = resp.json().get("data", {})
-                listing_href = (
-                    new_item.get("relationships", {})
-                    .get("files", {})
-                    .get("links", {})
-                    .get("related", {})
-                    .get("href")
-                )
+
                 wb_href = new_item.get("links", {}).get("upload")
                 if wb_href:
                     wb_href = wb_href.split("?")[0].rstrip("/") + "/"
+
+                # WaterButler folder-creation responses do NOT include
+                # 'relationships', so we can't get the listing URL from there.
+                # Derive it from attributes.path which contains the internal
+                # folder ID (e.g. "/69ae5335816a04950ce7d39d/").
+                folder_path = new_item.get("attributes", {}).get("path", "").strip("/")
+                if folder_path:
+                    listing_href = (
+                        f"https://api.osf.io/v2/nodes/{project_id}"
+                        f"/files/{provider}/{folder_path}/"
+                    )
+                else:
+                    listing_href = None
+
                 current_listing_url = listing_href or current_listing_url
                 current_wb_url = wb_href or current_wb_url
             else:
@@ -1743,9 +1786,17 @@ class OSFFileSystem(ObjectFileSystem):
         parent_path = get_directory(file_path)
         filename = get_filename(file_path)
 
-        # Get file's delete URL, following pagination
-        parent_api_url = path_to_api_url(project_id, provider, parent_path)
-        next_url = parent_api_url
+        # Navigate to parent directory using internal IDs (handles nested paths).
+        # Using path_to_api_url here would fail for paths deeper than the root
+        # because OSF requires internal file IDs for nested directories.
+        try:
+            parent_listing_url, _ = self._navigate_to_dir(
+                project_id, provider, parent_path, create_missing=False
+            )
+        except OSFNotFoundError:
+            raise OSFNotFoundError(f"File not found: {path}")
+
+        next_url: Optional[str] = parent_listing_url
         while next_url and isinstance(next_url, str):
             response = self.client.get(next_url)
             data = response.json()
