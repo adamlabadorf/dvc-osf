@@ -1129,16 +1129,29 @@ class OSFFileSystem(ObjectFileSystem):
             file_size, Config.OSF_UPLOAD_CHUNK_SIZE
         )
 
-        try:
-            if upload_strategy == "single":
-                remote_md5 = self._put_file_simple(lpath, rpath, callback)
-            else:
-                remote_md5 = self._put_file_chunked(lpath, rpath, callback)
-        except OSFVersionConflictError:
-            # 409: file already exists at target location.
-            # For DVC's content-addressed cache, filename == MD5, so same name
-            # means same content — treat as success without re-verifying.
-            return
+        # OSF / WaterButler have eventual consistency: directories created
+        # during put may not be visible in the listing API for a few seconds.
+        # Retry once on OSFNotFoundError with a short backoff.
+        import time as _time
+
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            try:
+                if upload_strategy == "single":
+                    remote_md5 = self._put_file_simple(lpath, rpath, callback)
+                else:
+                    remote_md5 = self._put_file_chunked(lpath, rpath, callback)
+                break  # success
+            except OSFVersionConflictError:
+                # 409: file already exists at target location.
+                # For DVC's content-addressed cache, filename == MD5, so same
+                # name means same content — treat as success without checking.
+                return
+            except OSFNotFoundError:
+                if attempt < max_attempts:
+                    _time.sleep(2 * attempt)  # 2s, 4s
+                else:
+                    raise
 
         # Verify checksum using MD5 returned directly in the upload response.
         # This avoids a second OSF API round-trip (info() → _navigate_to_dir)
