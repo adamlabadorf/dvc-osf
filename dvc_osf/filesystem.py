@@ -730,8 +730,14 @@ class OSFFileSystem(ObjectFileSystem):
                     elif kind == "folder":
                         if withdirs:
                             results.append(full_path)
-                        # Recurse unless maxdepth reached
-                        if maxdepth is None or depth < maxdepth:
+                        # Recurse unless maxdepth reached.
+                        # Hard cap at 20 regardless of maxdepth to guard
+                        # against runaway recursion when navigation returns a
+                        # listing URL that points to a parent directory.
+                        hard_limit = 20
+                        if (maxdepth is None or depth < maxdepth) and (
+                            depth < hard_limit
+                        ):
                             sub_listing = (
                                 item.get("relationships", {})
                                 .get("files", {})
@@ -1862,56 +1868,58 @@ class OSFFileSystem(ObjectFileSystem):
         Raises:
             OSFNotFoundError: If path doesn't exist
         """
-        # Check if path exists and get its type
-        try:
-            info = self.info(path)
-        except OSFNotFoundError:
-            # Path doesn't exist - that's okay for delete
-            return
-
-        if info["type"] == "directory":
-            if recursive:
-                # List and delete all files in directory
-                items_d: List[Dict[str, Any]] = self.ls(path, detail=True)  # type: ignore[assignment] # noqa: E501
-                for item in items_d:
-                    self.rm(item["name"], recursive=True)
-            # OSF directories are virtual - nothing to delete
-            return
-
-        # Delete file
+        # Resolve path components.
         project_id, provider, file_path = self._resolve_path(path)
+        if not file_path:
+            return  # Root — nothing to delete.
+
         parent_path = get_directory(file_path)
         filename = get_filename(file_path)
 
-        # Navigate to parent directory using internal IDs (handles nested paths).
-        # Using path_to_api_url here would fail for paths deeper than the root
-        # because OSF requires internal file IDs for nested directories.
+        # Navigate to parent directory using internal IDs.
+        # Do NOT call info() first: info() uses the same _navigate_to_dir
+        # path and will silently raise OSFNotFoundError if navigation is
+        # imperfect, causing rm() to return without deleting anything.
+        # Instead, navigate directly to the parent and search for the item.
         try:
             parent_listing_url, _ = self._navigate_to_dir(
                 project_id, provider, parent_path, create_missing=False
             )
         except OSFNotFoundError:
-            raise OSFNotFoundError(f"File not found: {path}")
+            return  # Parent doesn't exist — nothing to delete.
 
         next_url: Optional[str] = parent_listing_url
         while next_url and isinstance(next_url, str):
             response = self.client.get(next_url)
             data = response.json()
 
-            if "data" in data:
-                for item in data["data"]:
-                    item_name = item.get("attributes", {}).get("name", "")
-                    if item_name == filename:
-                        # Found file, get delete URL
-                        links = item.get("links", {})
-                        delete_url = links.get("delete") or links.get("upload")
+            for item in data.get("data", []):
+                item_name = item.get("attributes", {}).get("name", "")
+                if item_name != filename:
+                    continue
+
+                kind = item.get("attributes", {}).get("kind", "")
+                links = item.get("links", {})
+
+                if kind == "folder":
+                    if recursive:
+                        # Delete the folder via WaterButler DELETE (not a
+                        # no-op — WaterButler supports folder deletion).
+                        delete_url = links.get("delete")
                         if delete_url:
                             self.client.delete(delete_url)
-                        return
+                    return  # Done (recursive=False means leave folder alone).
+
+                # It's a file — delete it.
+                delete_url = links.get("delete") or links.get("upload")
+                if delete_url:
+                    self.client.delete(delete_url)
+                return
 
             next_url = data.get("links", {}).get("next")
 
-        raise OSFNotFoundError(f"File not found: {path}")
+        # Item not found — treat as already deleted (idempotent).
+        return
 
     def rm_file(self, path: str, **kwargs: Any) -> None:
         """
