@@ -1929,7 +1929,12 @@ class OSFFileSystem(ObjectFileSystem):
         # This is a no-op that always succeeds
         pass
 
-    def rm(self, path: str, recursive: bool = False, **kwargs: Any) -> None:  # type: ignore[override] # noqa: E501
+    def rm(  # type: ignore[override]
+        self,
+        path: Union[str, List[str]],
+        recursive: bool = False,
+        **kwargs: Any,
+    ) -> None:
         """
         Delete a file or directory from OSF.
 
@@ -1941,6 +1946,12 @@ class OSFFileSystem(ObjectFileSystem):
         Raises:
             OSFNotFoundError: If path doesn't exist
         """
+        # dvc gc passes a list of paths when batch-deleting; handle both cases.
+        if isinstance(path, list):
+            for p in path:
+                self.rm(p, recursive=recursive, **kwargs)
+            return
+
         # Resolve path components.
         project_id, provider, file_path = self._resolve_path(path)
         if not file_path:
