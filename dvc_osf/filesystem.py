@@ -809,6 +809,17 @@ class OSFFileSystem(ObjectFileSystem):
                 next_url = data.get("links", {}).get("next")
 
         _collect(listing_url, dir_path, 1)
+
+        # ObjectDB.path_to_oid expects result paths to use the same format as
+        # odb.path (no protocol prefix when called via internal dvc-objects
+        # traversal).  _collect always produces osf:// paths via serialize_path;
+        # strip the prefix when the caller supplied a path without it so that
+        # path_to_oid can correctly compute relative path parts.
+        if not path.startswith("osf://"):
+            results = [
+                r[len("osf://") :] if r.startswith("osf://") else r for r in results
+            ]
+
         return results
 
     def _build_path(
