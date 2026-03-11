@@ -656,6 +656,64 @@ class OSFFileSystem(ObjectFileSystem):
                 for item in items
             ]
 
+    def walk(  # type: ignore[override]
+        self,
+        path: str,
+        maxdepth: Optional[int] = None,
+        topdown: bool = True,
+        detail: bool = False,
+        **kwargs: Any,
+    ):
+        """Walk directory tree, yielding (dirpath, dirnames, filenames) tuples.
+
+        ``dvc ls-url`` uses ``fs.walk(path, detail=True)`` internally.  The
+        default ``ObjectFileSystem.walk`` delegates to ``self.fs.walk`` where
+        ``self.fs is self``, causing infinite recursion.  This override uses
+        our ``ls()`` implementation directly.
+
+        Args:
+            path: Root directory path
+            maxdepth: Maximum recursion depth (None = unlimited)
+            topdown: Yield parent before children when True
+            detail: If True, yield info dicts; otherwise yield name strings
+            **kwargs: Additional arguments passed to ``ls()``
+        """
+        try:
+            raw = self.ls(path, detail=True, **kwargs)
+        except (FileNotFoundError, OSFNotFoundError):
+            return
+        items: List[Dict[str, Any]] = raw  # type: ignore[assignment]
+
+        dirs: Dict[str, Any] = {}
+        files: Dict[str, Any] = {}
+        for item in items:
+            name = item["name"].rstrip("/").rsplit("/", 1)[-1]
+            if item["type"] == "directory":
+                dirs[name] = item
+            else:
+                files[name] = item
+
+        if topdown:
+            yield path, (dirs if detail else list(dirs)), (
+                files if detail else list(files)
+            )
+
+        if maxdepth is None or maxdepth > 1:
+            next_depth = (maxdepth - 1) if maxdepth is not None else None
+            for subdir_info in dirs.values():
+                yield from self.walk(
+                    subdir_info["name"],
+                    maxdepth=next_depth,
+                    topdown=topdown,
+                    detail=detail,
+                    **kwargs,
+                )
+
+        if not topdown:
+            yield path, (dirs if detail else list(dirs)), (
+                files if detail else list(files)
+            )
+
     def find(  # type: ignore[override]
         self,
         path: str,
