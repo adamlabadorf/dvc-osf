@@ -2,6 +2,42 @@
 
 All notable changes to dvc-osf are documented here.
 
+## [1.0.5] - 2026-03-11
+
+### Fixed
+- `dvc gc --cloud` now correctly removes unreferenced files from OSF remotes.
+  Three layered issues were resolved:
+  - `find()` always returned `osf://`-prefixed paths; `ObjectDB.path_to_oid()`
+    expected unprefixed paths matching `odb.path`. Every OID extraction raised
+    `ValueError` and was silently skipped, making `odb.all()` return `[]` so gc
+    found nothing to delete. Fix: `find()` now strips the `osf://` prefix from
+    results when the caller supplied a path without it.
+  - `TRAVERSE_PREFIX_LEN` was 3, causing `ObjectDB._list_oids_traverse()` to
+    use per-prefix `find()` calls with `prefix=True`—a mode our implementation
+    does not support. Set to 2 so the full-scan path (`find(odb.path)`) is used
+    for small remotes instead.
+  - Integration test was missing the `-c` / `--cloud` flag; without it `dvc gc`
+    only GCs the local cache and never touches the remote.
+- `dvc ls-url` no longer crashes with `RecursionError: maximum recursion depth
+  exceeded`. `dvc ls-url` calls `walk()`, which was inherited from
+  `dvc_objects.fs.base.FileSystem`. That base implementation delegates to
+  `self.fs.walk()`, but `self.fs = self`, creating infinite recursion. Fix:
+  implement `walk()` directly in `OSFFileSystem` using `ls()` + recursive
+  descent.
+- OSF / WaterButler eventual consistency: directories created via WaterButler
+  may not appear in the OSF listing API for several seconds, causing intermittent
+  404 failures during `dvc push`. Three complementary fixes:
+  - `_navigate_to_dir`: catch `OSFNotFoundError` (404) when listing a freshly
+    created directory and treat it as an empty directory so `create_missing=True`
+    falls through to folder creation.
+  - `_navigate_to_dir` (non-creating path): when an item is not found in the
+    parent listing, try a path-based URL constructed from the accumulated
+    human-readable path before raising `OSFNotFoundError`.
+  - `put_file`: retry up to 3 times on `OSFNotFoundError` with exponential
+    backoff (2 s, 4 s) before propagating the error.
+- `rm()` now accepts a `list[str]` of paths (as passed by `dvc gc`) in addition
+  to a single path string.
+
 ## [1.0.4] - 2026-03-09
 
 ### Fixed
