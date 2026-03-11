@@ -535,7 +535,17 @@ class OSFAPIClient:
                 timeout=self.upload_timeout,
             )
 
-        response = _attempt()
+        # Retry on transient 5xx errors (rewinds file between attempts).
+        for attempt in range(1, self.max_retries + 1):
+            response = _attempt()
+            if response.status_code < 500 or attempt == self.max_retries:
+                break
+            logger.warning(
+                "Upload returned %s on attempt %d/%d, retrying...",
+                response.status_code,
+                attempt,
+                self.max_retries,
+            )
         self._handle_response(response)
         return response
 
