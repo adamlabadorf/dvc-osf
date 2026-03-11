@@ -757,6 +757,14 @@ class OSFFileSystem(ObjectFileSystem):
         # Normalise prefix: treat booleans as "no filter"
         name_prefix: str = prefix if isinstance(prefix, str) else ""
 
+        # Preserve the scheme style of the caller.  dvc-objects builds the
+        # remote ODB path WITHOUT "osf://" (e.g. "3eugf/osfstorage/…").
+        # When find() is called with such a path, returned paths must also
+        # omit the scheme so that ObjectDB.path_to_oid() correctly slices
+        # the path components (PurePosixPath adds an extra "osf:" component
+        # for scheme-prefixed paths, misaligning the slice).
+        _input_has_scheme = path.lower().startswith("osf://")
+
         results: List = []
 
         def _collect(listing_url: str, current_dir: str, depth: int) -> None:
@@ -774,7 +782,8 @@ class OSFFileSystem(ObjectFileSystem):
                         continue
 
                     item_dir = f"{current_dir}/{name}".lstrip("/")
-                    full_path = serialize_path(project_id, provider, item_dir)
+                    raw = f"{project_id}/{provider}/{item_dir}"
+                    full_path = f"osf://{raw}" if _input_has_scheme else raw
 
                     if kind == "file":
                         if detail:
