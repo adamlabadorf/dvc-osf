@@ -1242,8 +1242,11 @@ class OSFFileSystem(ObjectFileSystem):
 
         current_listing_url: str = root_listing_url
         current_wb_url: str = root_wb_url
+        # Tracks accumulated human-readable path for path-based URL fallback.
+        path_so_far: list = []
 
         for part in parts:
+            path_so_far.append(part)
             # Search current directory for this component (follow pagination).
             # OSF API and WaterButler have eventual consistency: a folder just
             # created via WB may not yet appear in the OSF metadata API.  If
@@ -1389,7 +1392,28 @@ class OSFFileSystem(ObjectFileSystem):
                 current_listing_url = listing_href or current_listing_url
                 current_wb_url = wb_href or current_wb_url
             else:
-                raise OSFNotFoundError(f"Directory not found: {dir_path}")
+                # Item not found and we are not creating it.  OSF has
+                # eventual consistency: a folder created via WB may not
+                # appear in the parent listing for a short time, but the
+                # OSF API *does* respond correctly to a direct path-based
+                # URL once WB has committed the object.  Try constructing
+                # a path-based URL from the accumulated human-readable path
+                # before giving up.
+                candidate_path = "/".join(path_so_far)
+                candidate_url = (
+                    f"https://api.osf.io/v2/nodes/{project_id}"
+                    f"/files/{provider}/{candidate_path}/"
+                )
+                try:
+                    self.client.get(candidate_url)  # raises on 404
+                    # Path-based navigation worked — use it for listing.
+                    current_listing_url = candidate_url
+                    current_wb_url = (
+                        f"https://files.osf.io/v1/resources/{project_id}"
+                        f"/providers/{provider}/{candidate_path}/"
+                    )
+                except OSFNotFoundError:
+                    raise OSFNotFoundError(f"Directory not found: {dir_path}")
 
         return current_listing_url, current_wb_url
 
@@ -1407,9 +1431,15 @@ class OSFFileSystem(ObjectFileSystem):
             project_id, provider, parent_path, create_missing=True
         )
 
+        # Search the parent listing for the file.  The listing URL may 404
+        # if the parent dir was just created via WB and the OSF metadata API
+        # hasn't caught up yet — treat that as "file doesn't exist yet".
         next_url: Optional[str] = current_listing_url
         while next_url and isinstance(next_url, str):
-            response = self.client.get(next_url)
+            try:
+                response = self.client.get(next_url)
+            except OSFNotFoundError:
+                break  # Newly-created dir not in OSF API yet → file absent.
             data = response.json()
             for item in data.get("data") or []:
                 if item.get("attributes", {}).get("name", "") == filename:
