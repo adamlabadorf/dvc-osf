@@ -388,6 +388,14 @@ class OSFFileSystem(ObjectFileSystem):
     REQUIRES = {"requests": "requests"}
     PARAM_CHECKSUM = "md5"
 
+    # DVC md5 cache uses 2-char prefix dirs (e.g. "ab/cdef1234…").
+    # The default ObjectFileSystem value is 3, which causes _estimate_remote_size
+    # to return 4096 instead of 256, pushing num_pages above the threshold
+    # that triggers multi-path prefix traversal — a code path that passes a
+    # list of paths to find() instead of a single string.  Override to 2
+    # (the correct value for md5) to stay in the simple _list_oids(None) path.
+    TRAVERSE_PREFIX_LEN = 2
+
     # OSF uses a synchronous implementation; declare explicitly so that
     # dvc_objects._put (and other callers) don't raise AttributeError when
     # they check `fs.async_impl` on our OSFFileSystem instance directly
