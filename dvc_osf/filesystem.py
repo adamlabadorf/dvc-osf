@@ -1186,17 +1186,32 @@ class OSFFileSystem(ObjectFileSystem):
         current_wb_url: str = root_wb_url
 
         for part in parts:
-            # Search current directory for this component (follow pagination)
+            # Search current directory for this component (follow pagination).
+            # OSF API and WaterButler have eventual consistency: a folder just
+            # created via WB may not yet appear in the OSF metadata API.  If
+            # the listing URL returns 404, treat it as an empty directory so
+            # that create_missing=True falls through to folder creation.
             next_url: Optional[str] = current_listing_url
             found_item = None
+            listing_404 = False
             while next_url and isinstance(next_url, str) and found_item is None:
-                response = self.client.get(next_url)
+                try:
+                    response = self.client.get(next_url)
+                except OSFNotFoundError:
+                    # Listing URL itself returned 404 — folder was just created
+                    # via WB and isn't reflected in OSF metadata API yet.
+                    listing_404 = True
+                    break
                 data = response.json()
                 for item in data.get("data", []):
                     if item.get("attributes", {}).get("name") == part:
                         found_item = item
                         break
                 next_url = data.get("links", {}).get("next")
+
+            # If OSF metadata API returned 404 and we can't create, bail out.
+            if listing_404 and not create_missing:
+                raise OSFNotFoundError(f"Directory not found: {dir_path}")
 
             if found_item is not None:
                 # Navigate into the existing folder.
