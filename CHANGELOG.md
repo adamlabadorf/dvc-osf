@@ -2,6 +2,23 @@
 
 All notable changes to dvc-osf are documented here.
 
+## [1.0.6] - 2026-03-12
+
+### Fixed
+- `dvc import-url osf://...` no longer crashes with `RecursionError: maximum
+  recursion depth exceeded`. The error occurred during `stage.save_deps()` →
+  `dep.save()` → `isfile()` because `dvc_objects.fs.base.FileSystem` sets
+  `self.fs = self` and its stub implementations of `isfile()`, `isdir()`,
+  `lexists()`, `size()`, and `glob()` all delegate to `self.fs.X()`, creating
+  an infinite cycle. Fix: override all five methods in `OSFFileSystem` to
+  resolve directly against the OSF HTTP backend (via `info()` / `find()`),
+  matching the pattern already used by `exists()` and `walk()`.
+
+### Added
+- Unit tests for `isfile()`, `isdir()`, `lexists()`, `size()`, and `glob()`,
+  including explicit regression tests that assert no `RecursionError` is raised.
+- Integration tests for `dvc import-url` with `osf://` URLs.
+
 ## [1.0.5] - 2026-03-11
 
 ### Fixed
