@@ -656,6 +656,40 @@ class OSFFileSystem(ObjectFileSystem):
         """
         return self.exists(path)
 
+    def size(self, path: str) -> Optional[int]:  # type: ignore[override]
+        """Return the size in bytes of a file on OSF, or None if unknown.
+
+        Same self.fs = self recursion guard as isfile().
+        """
+        try:
+            return self.info(path).get("size")
+        except (OSFNotFoundError, FileNotFoundError):
+            return None
+
+    def glob(self, path: str, **kwargs: Any) -> List[str]:  # type: ignore[override]
+        """Expand a glob pattern against OSF paths.
+
+        Same self.fs = self recursion guard as isfile().  Delegates to
+        find() which already works correctly.
+        """
+        import fnmatch
+
+        # Split into a base directory and a pattern suffix.
+        # For simple patterns (no wildcards in parent dirs), list the parent
+        # dir and filter.  For complex patterns fall back to find() + fnmatch.
+        parts = path.split("/")
+        base_parts = []
+        for i, part in enumerate(parts):
+            if any(c in part for c in ("*", "?", "[")):
+                break
+            base_parts.append(part)
+        base = "/".join(base_parts) if base_parts else path
+        try:
+            all_paths = self.find(base)
+        except (OSFNotFoundError, FileNotFoundError):
+            return []
+        return [str(p) for p in all_paths if fnmatch.fnmatch(str(p), path)]
+
     def ls(  # type: ignore[override]
         self, path: str, detail: bool = False, **kwargs: Any
     ) -> Union[List[str], List[Dict[str, Any]]]:
