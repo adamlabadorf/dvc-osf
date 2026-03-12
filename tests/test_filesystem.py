@@ -1263,3 +1263,129 @@ class TestBatchOperations:
             assert len(callback_calls) == 2
             assert callback_calls[0] == (1, 2, "osf://abc/file1.txt", "copy")
             assert callback_calls[1] == (2, 2, "osf://abc/file2.txt", "copy")
+
+
+class TestOSFFileSystemIsfileIsdir:
+    """Tests for isfile(), isdir(), lexists(), size(), and glob().
+
+    These methods are stubs in dvc_objects.fs.base.FileSystem that delegate
+    to self.fs.X().  Because self.fs = self in that base class, without
+    overrides every call recurses infinitely.  These tests verify both that
+    the methods return correct results AND that they never recurse.
+    """
+
+    @patch("dvc_osf.filesystem.OSFFileSystem.info")
+    def test_isfile_returns_true_for_file(self, mock_info):
+        mock_info.return_value = {"type": "file", "size": 42}
+        fs = OSFFileSystem("osf://abc123/osfstorage", token="test_token")
+        assert fs.isfile("osf://abc123/osfstorage/data.csv") is True
+
+    @patch("dvc_osf.filesystem.OSFFileSystem.info")
+    def test_isfile_returns_false_for_directory(self, mock_info):
+        mock_info.return_value = {"type": "directory"}
+        fs = OSFFileSystem("osf://abc123/osfstorage", token="test_token")
+        assert fs.isfile("osf://abc123/osfstorage/somedir") is False
+
+    @patch("dvc_osf.filesystem.OSFFileSystem.info")
+    def test_isfile_returns_false_when_not_found(self, mock_info):
+        mock_info.side_effect = OSFNotFoundError("Not found")
+        fs = OSFFileSystem("osf://abc123/osfstorage", token="test_token")
+        assert fs.isfile("osf://abc123/osfstorage/missing.csv") is False
+
+    @patch("dvc_osf.filesystem.OSFFileSystem.info")
+    def test_isdir_returns_true_for_directory(self, mock_info):
+        mock_info.return_value = {"type": "directory"}
+        fs = OSFFileSystem("osf://abc123/osfstorage", token="test_token")
+        assert fs.isdir("osf://abc123/osfstorage/somedir") is True
+
+    @patch("dvc_osf.filesystem.OSFFileSystem.info")
+    def test_isdir_returns_false_for_file(self, mock_info):
+        mock_info.return_value = {"type": "file", "size": 42}
+        fs = OSFFileSystem("osf://abc123/osfstorage", token="test_token")
+        assert fs.isdir("osf://abc123/osfstorage/data.csv") is False
+
+    @patch("dvc_osf.filesystem.OSFFileSystem.info")
+    def test_isdir_returns_false_when_not_found(self, mock_info):
+        mock_info.side_effect = OSFNotFoundError("Not found")
+        fs = OSFFileSystem("osf://abc123/osfstorage", token="test_token")
+        assert fs.isdir("osf://abc123/osfstorage/missing") is False
+
+    @patch("dvc_osf.filesystem.OSFFileSystem.info")
+    def test_lexists_returns_true_when_exists(self, mock_info):
+        mock_info.return_value = {"type": "file", "size": 10}
+        fs = OSFFileSystem("osf://abc123/osfstorage", token="test_token")
+        assert fs.lexists("osf://abc123/osfstorage/data.csv") is True
+
+    @patch("dvc_osf.filesystem.OSFFileSystem.info")
+    def test_lexists_returns_false_when_not_found(self, mock_info):
+        mock_info.side_effect = OSFNotFoundError("Not found")
+        fs = OSFFileSystem("osf://abc123/osfstorage", token="test_token")
+        assert fs.lexists("osf://abc123/osfstorage/missing.csv") is False
+
+    @patch("dvc_osf.filesystem.OSFFileSystem.info")
+    def test_size_returns_file_size(self, mock_info):
+        mock_info.return_value = {"type": "file", "size": 1234}
+        fs = OSFFileSystem("osf://abc123/osfstorage", token="test_token")
+        assert fs.size("osf://abc123/osfstorage/data.csv") == 1234
+
+    @patch("dvc_osf.filesystem.OSFFileSystem.info")
+    def test_size_returns_none_when_not_found(self, mock_info):
+        mock_info.side_effect = OSFNotFoundError("Not found")
+        fs = OSFFileSystem("osf://abc123/osfstorage", token="test_token")
+        assert fs.size("osf://abc123/osfstorage/missing.csv") is None
+
+    @patch("dvc_osf.filesystem.OSFFileSystem.find")
+    def test_glob_matches_pattern(self, mock_find):
+        mock_find.return_value = [
+            "osf://abc123/osfstorage/data/counts.csv",
+            "osf://abc123/osfstorage/data/metadata.tsv",
+            "osf://abc123/osfstorage/data/README.md",
+        ]
+        fs = OSFFileSystem("osf://abc123/osfstorage", token="test_token")
+        result = fs.glob("osf://abc123/osfstorage/data/*.csv")
+        assert result == ["osf://abc123/osfstorage/data/counts.csv"]
+
+    @patch("dvc_osf.filesystem.OSFFileSystem.find")
+    def test_glob_no_matches(self, mock_find):
+        mock_find.return_value = ["osf://abc123/osfstorage/data/metadata.tsv"]
+        fs = OSFFileSystem("osf://abc123/osfstorage", token="test_token")
+        result = fs.glob("osf://abc123/osfstorage/data/*.csv")
+        assert result == []
+
+    def test_isfile_does_not_recurse(self):
+        """Regression: isfile() must not recurse via self.fs.isfile()."""
+        import threading
+
+        fs = OSFFileSystem("osf://abc123/osfstorage", token="test_token")
+        recursion_error = []
+
+        def run():
+            with patch.object(fs, "info", side_effect=OSFNotFoundError("x")):
+                try:
+                    fs.isfile("osf://abc123/osfstorage/x")
+                except RecursionError:
+                    recursion_error.append(True)
+
+        t = threading.Thread(target=run)
+        t.start()
+        t.join(timeout=5)
+        assert not recursion_error, "isfile() caused RecursionError"
+
+    def test_isdir_does_not_recurse(self):
+        """Regression: isdir() must not recurse via self.fs.isdir()."""
+        fs = OSFFileSystem("osf://abc123/osfstorage", token="test_token")
+        recursion_error = []
+
+        def run():
+            with patch.object(fs, "info", side_effect=OSFNotFoundError("x")):
+                try:
+                    fs.isdir("osf://abc123/osfstorage/x")
+                except RecursionError:
+                    recursion_error.append(True)
+
+        import threading
+
+        t = threading.Thread(target=run)
+        t.start()
+        t.join(timeout=5)
+        assert not recursion_error, "isdir() caused RecursionError"

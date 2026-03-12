@@ -676,3 +676,99 @@ class TestDvcPushPullLargeFile:
         assert len(pulled) == size, f"Size mismatch: {len(pulled)} != {size}"
         assert pulled == data, "Content mismatch on large file pull"
         assert pulled[:4] != b"\x00\x00\x00\x00", "Suspiciously zero-filled start"
+
+
+class TestDvcImportUrl:
+    """dvc import-url with osf:// URLs.
+
+    Regression suite for the RecursionError reported when dvc import-url
+    calls isfile() / isdir() during stage.save_deps(), which previously
+    recursed infinitely through dvc_objects.fs.base.FileSystem.isfile()
+    → self.fs.isfile() → … (self.fs = self).
+    """
+
+    def test_import_url_downloads_file(self, dvc_repo, osf_fs):
+        """dvc import-url should download a file from OSF into the workspace."""
+        repo, remote_url = dvc_repo
+
+        # Upload a test file directly to a human-readable OSF path so that
+        # import-url can reference it without knowing the DVC cache hash.
+        content = b"import-url test content " + uuid.uuid4().hex.encode()
+        project_id = os.environ["OSF_TEST_PROJECT_ID"]
+        named_path = (
+            f"osf://{project_id}/osfstorage/"
+            f"dvc-integration-tests/import-url-{uuid.uuid4().hex[:8]}/data.csv"
+        )
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(delete=False) as f:
+            f.write(content)
+            tmp = f.name
+        try:
+            osf_fs.put_file(tmp, named_path)
+        finally:
+            os.unlink(tmp)
+
+        try:
+            result = run("dvc", "import-url", named_path, "imported.csv", cwd=str(repo))
+            assert (
+                result.returncode == 0 or result is not None
+            )  # run() raises on failure
+
+            downloaded = (repo / "imported.csv").read_bytes()
+            assert downloaded == content, "imported file content must match source"
+
+            # .dvc file should be created
+            assert (
+                repo / "imported.csv.dvc"
+            ).exists(), "import-url should create a .dvc file"
+        finally:
+            # Clean up the named OSF path
+            try:
+                parent = named_path.rsplit("/", 1)[0]
+                osf_fs.rm(parent, recursive=True)
+            except Exception:
+                pass
+
+    def test_import_url_no_recursion_error(self, dvc_repo, osf_fs):
+        """dvc import-url must not raise RecursionError (isfile/isdir regression)."""
+        repo, remote_url = dvc_repo
+
+        content = b"recursion regression " + uuid.uuid4().hex.encode()
+        project_id = os.environ["OSF_TEST_PROJECT_ID"]
+        named_path = (
+            f"osf://{project_id}/osfstorage/"
+            f"dvc-integration-tests/import-url-{uuid.uuid4().hex[:8]}/file.txt"
+        )
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(delete=False) as f:
+            f.write(content)
+            tmp = f.name
+        try:
+            osf_fs.put_file(tmp, named_path)
+        finally:
+            os.unlink(tmp)
+
+        try:
+            result = run(
+                "dvc",
+                "import-url",
+                named_path,
+                "imported.txt",
+                check=False,
+                cwd=str(repo),
+            )
+            assert result.returncode != 255, (
+                "dvc import-url exited with rc=255 (RecursionError / unexpected error):\n"
+                + result.stderr
+            )
+            assert (
+                "RecursionError" not in result.stderr
+            ), "RecursionError must not appear in dvc import-url stderr"
+        finally:
+            try:
+                parent = named_path.rsplit("/", 1)[0]
+                osf_fs.rm(parent, recursive=True)
+            except Exception:
+                pass
