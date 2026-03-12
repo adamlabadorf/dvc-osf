@@ -626,6 +626,36 @@ class OSFFileSystem(ObjectFileSystem):
         except OSFNotFoundError:
             return False
 
+    def isfile(self, path: str) -> bool:  # type: ignore[override]
+        """Return True if *path* is a file on OSF.
+
+        Overrides the dvc_objects.fs.base.FileSystem stub that delegates to
+        ``self.fs.isfile()``.  Because ``self.fs = self`` in that base class,
+        without this override the call recurses until Python's stack is
+        exhausted (RecursionError).
+        """
+        try:
+            return bool(self.info(path)["type"] == "file")
+        except (OSFNotFoundError, FileNotFoundError):
+            return False
+
+    def isdir(self, path: str) -> bool:  # type: ignore[override]
+        """Return True if *path* is a directory on OSF.
+
+        Same self.fs = self recursion guard as isfile().
+        """
+        try:
+            return bool(self.info(path)["type"] == "directory")
+        except (OSFNotFoundError, FileNotFoundError):
+            return False
+
+    def lexists(self, path: str) -> bool:  # type: ignore[override]
+        """Return True if *path* exists (symlink-unaware; same as exists() for OSF).
+
+        Same self.fs = self recursion guard as isfile().
+        """
+        return self.exists(path)
+
     def ls(  # type: ignore[override]
         self, path: str, detail: bool = False, **kwargs: Any
     ) -> Union[List[str], List[Dict[str, Any]]]:
